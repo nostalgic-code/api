@@ -51,11 +51,13 @@ BASE_URL = os.getenv('API_BASE_URL')  # Base URL for external API endpoints
 # Import API blueprints
 from api.products import products_bp
 from api.pipeline import pipeline_bp
+from api.auth import auth_bp
 from utils.database import DatabaseConnection
 
 # Register API blueprints
 app.register_blueprint(products_bp, url_prefix='/api/products')
 app.register_blueprint(pipeline_bp, url_prefix='/api')
+app.register_blueprint(auth_bp, url_prefix='/auth')
 
 # CORS configuration for cross-origin requests
 @app.after_request
