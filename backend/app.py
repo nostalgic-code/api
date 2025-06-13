@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 from requests.auth import HTTPBasicAuth
-from enhanced_pipeline import EnhancedDataPipeline
+from backend.pipeline.enhanced_pipeline import EnhancedDataPipeline
 import os
 from dotenv import load_dotenv
 import threading
@@ -98,7 +98,7 @@ def run_incremental_sync():
 def get_marketplace_products():
     """Get products for marketplace with filtering"""
     try:
-        from database import DatabaseConnection
+        from backend.app.utils.database import DatabaseConnection
         
         # Get query parameters
         category = request.args.get('category')

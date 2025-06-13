@@ -7,7 +7,7 @@ import schedule
 import time
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
-from database import DatabaseConnection
+from utils.database import DatabaseConnection
 from models.product_model import Product
 from dotenv import load_dotenv
 

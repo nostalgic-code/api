@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
-from database_sqlite import SQLiteConnection
+from backend.app.utils.database_sqlite import SQLiteConnection
 from test_pipeline_sqlite.data_pipeline_sqlite import DataPipelineSQLite
 from dotenv import load_dotenv
 
