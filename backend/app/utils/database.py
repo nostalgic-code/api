@@ -1,3 +1,43 @@
+"""
+Database Connection and Management Module
+
+This module provides a robust database connection handler for MySQL databases with
+comprehensive error handling, connection pooling, and database operations management.
+
+Key Features:
+- MySQL connection management with automatic reconnection
+- Environment-based configuration for security
+- Comprehensive error handling with specific error guidance
+- Query execution with parameterized statements
+- Connection testing and validation
+- Table creation and management utilities
+- Logging for debugging and monitoring
+
+Classes:
+    DatabaseConnection: Main database connection handler
+
+Dependencies:
+    - mysql-connector-python: MySQL database connector
+    - python-dotenv: Environment variable management
+    - logging: For operation logging
+
+Environment Variables Required:
+    - DB_HOST: Database server hostname/IP
+    - DB_PORT: Database server port (default: 3306)
+    - DB_NAME: Database name
+    - DB_USER: Database username
+    - DB_PASSWORD: Database password
+
+Usage:
+    db = DatabaseConnection()
+    if db.connect():
+        results = db.execute_query("SELECT * FROM products")
+        db.disconnect()
+
+Author: Development Team
+Version: 1.0
+"""
+
 import mysql.connector
 from mysql.connector import Error
 import os
@@ -7,7 +47,28 @@ import logging
 load_dotenv()
 
 class DatabaseConnection:
+    """
+    Database connection handler for MySQL with comprehensive error handling.
+    
+    This class manages MySQL database connections, provides query execution
+    capabilities, and includes utilities for database management operations.
+    
+    Attributes:
+        host (str): Database server hostname
+        port (int): Database server port
+        database (str): Database name
+        user (str): Database username
+        password (str): Database password
+        connection: Active MySQL connection object
+    """
+    
     def __init__(self):
+        """
+        Initialize database connection parameters from environment variables.
+        
+        Raises:
+            ValueError: If required environment variables are missing
+        """
         self.host = os.getenv('DB_HOST')
         self.port = int(os.getenv('DB_PORT', 3306))
         self.database = os.getenv('DB_NAME')
@@ -31,7 +92,19 @@ class DatabaseConnection:
             raise ValueError(f"Missing required database environment variables: {', '.join(missing)}")
     
     def connect(self):
-        """Establish database connection with better error handling"""
+        """
+        Establish database connection with comprehensive error handling.
+        
+        Attempts to connect to the MySQL database using configured parameters.
+        Includes connection testing and detailed error reporting.
+        
+        Returns:
+            bool: True if connection successful, False otherwise
+            
+        Note:
+            Connection uses utf8mb4 charset for full Unicode support
+            and includes timeout configuration for reliability.
+        """
         try:
             # Connection configuration matching your PHP setup
             config = {
@@ -85,13 +158,35 @@ class DatabaseConnection:
             return False
     
     def disconnect(self):
-        """Close database connection"""
+        """
+        Safely close the database connection.
+        
+        Closes active database connection and logs the operation.
+        Safe to call even if no connection exists.
+        """
         if self.connection and self.connection.is_connected():
             self.connection.close()
             logging.info("Database connection closed")
     
     def execute_query(self, query, params=None):
-        """Execute a query and return results"""
+        """
+        Execute a SQL query with parameterized inputs for security.
+        
+        Args:
+            query (str): SQL query string with placeholders
+            params (tuple, optional): Parameters for query placeholders
+            
+        Returns:
+            list: Query results for SELECT statements
+            int: Number of affected rows for INSERT/UPDATE/DELETE
+            
+        Raises:
+            Exception: If no active connection or query execution fails
+            
+        Note:
+            Automatically handles transactions with commit/rollback
+            Uses parameterized queries to prevent SQL injection
+        """
         if not self.connection or not self.connection.is_connected():
             raise Exception("No active database connection")
             
@@ -120,7 +215,22 @@ class DatabaseConnection:
                 cursor.close()
     
     def create_table_if_not_exists(self, table_name, schema):
-        """Create table if it doesn't exist"""
+        """
+        Create a database table if it doesn't already exist.
+        
+        Args:
+            table_name (str): Name of the table to create
+            schema (str): SQL schema definition for the table
+            
+        Raises:
+            Exception: If table creation fails
+            
+        Usage:
+            db.create_table_if_not_exists(
+                'products', 
+                'id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255)'
+            )
+        """
         query = f"CREATE TABLE IF NOT EXISTS {table_name} ({schema})"
         try:
             self.execute_query(query)
@@ -130,7 +240,26 @@ class DatabaseConnection:
             raise
     
     def test_connection(self):
-        """Test database connection and return detailed info"""
+        """
+        Comprehensive connection test with detailed database information.
+        
+        Tests database connectivity and gathers system information including
+        current database, user permissions, and MySQL version details.
+        
+        Returns:
+            dict: Connection status and database information
+                - connected (bool): Connection success status
+                - database (str): Current database name
+                - user (str): Current user
+                - mysql_version (str): MySQL server version
+                - can_create_tables (bool): Table creation permissions
+                - error (str): Error message if connection failed
+                
+        Usage:
+            result = db.test_connection()
+            if result['connected']:
+                print(f"Connected to {result['database']} as {result['user']}")
+        """
         try:
             if self.connect():
                 cursor = self.connection.cursor()
@@ -156,6 +285,8 @@ class DatabaseConnection:
                 
                 cursor.close()
                 self.disconnect()
+                
+                logging.info(f"Connection test successful: {current_db}, {current_user}, {mysql_version}, {can_create_tables}")
                 
                 return {
                     'connected': True,

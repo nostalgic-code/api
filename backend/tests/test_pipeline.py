@@ -113,7 +113,7 @@ def check_prerequisites():
         return False
     
     try:
-        from models.product_model import Product
+        from models.product import Product
         print("✅ product_model.py found")
     except ImportError:
         print("❌ models/product_model.py not found")

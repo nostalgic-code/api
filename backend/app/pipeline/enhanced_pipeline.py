@@ -1,3 +1,45 @@
+"""
+Enhanced Data Pipeline Module
+
+This module provides comprehensive data synchronization between external APIs
+and the local marketplace database. It handles full and incremental syncs,
+data transformation, error handling, and scheduling.
+
+Key Features:
+- Full and incremental data synchronization
+- Robust error handling and retry logic
+- Data transformation and validation
+- Change detection using hash comparison
+- Scheduled synchronization jobs
+- Comprehensive logging and monitoring
+- Performance optimization with pagination
+
+Classes:
+    EnhancedDataPipeline: Main pipeline orchestrator
+
+Dependencies:
+    - requests: HTTP client for API communication
+    - mysql-connector-python: Database operations
+    - schedule: Job scheduling
+    - hashlib: Data change detection
+    - logging: Operation monitoring
+
+Environment Variables Required:
+    - API_USERNAME: External API authentication username
+    - API_PASSWORD: External API authentication password
+    - API_BASE_URL: Base URL for external API endpoints
+
+Usage:
+    pipeline = EnhancedDataPipeline()
+    pipeline.run_full_sync(page_size=100)
+    
+    # For scheduled operations
+    pipeline.start_scheduler()
+
+Author: Development Team
+Version: 2.0
+"""
+
 import requests
 import logging
 import hashlib
@@ -8,13 +50,33 @@ import time
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
 from utils.database import DatabaseConnection
-from models.product_model import Product
+from models.product import Product
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class EnhancedDataPipeline:
+    """
+    Comprehensive data pipeline for product synchronization.
+    
+    This class orchestrates data flow between external APIs and the local
+    database, providing robust synchronization capabilities with error
+    handling, monitoring, and optimization features.
+    
+    Attributes:
+        username (str): API authentication username
+        password (str): API authentication password
+        base_url (str): API base URL
+        db (DatabaseConnection): Database connection handler
+    """
+    
     def __init__(self):
+        """
+        Initialize pipeline with API credentials and database connection.
+        
+        Raises:
+            ValueError: If required environment variables are missing
+        """
         self.username = os.getenv('API_USERNAME')
         self.password = os.getenv('API_PASSWORD')
         self.base_url = os.getenv('API_BASE_URL')
@@ -34,7 +96,19 @@ class EnhancedDataPipeline:
             raise ValueError("Missing required environment variables")
 
     def create_optimized_products_table(self):
-        """Create optimized products table for marketplace"""
+        """
+        Create optimized marketplace products table with proper indexing.
+        
+        Creates a comprehensive products table with:
+        - Full text search capabilities
+        - Optimized indexes for common queries
+        - JSON storage for flexible part numbers
+        - Change tracking with hash fields
+        - Timestamp tracking for sync operations
+        
+        Note:
+            Table is created only if it doesn't exist to prevent data loss
+        """
         try:
             # Check if table exists first
             check_table_query = """
@@ -85,7 +159,15 @@ class EnhancedDataPipeline:
             logging.error(f"Error creating marketplace_products table: {e}")
 
     def create_sync_log_table(self):
-        """Track synchronization history"""
+        """
+        Create synchronization logging table for operation tracking.
+        
+        Tracks all sync operations including:
+        - Sync type (full/incremental)
+        - Record counts (fetched/inserted/updated/errors)
+        - Timing information
+        - Status and error details
+        """
         try:
             # Check if table exists first
             check_table_query = """
@@ -122,7 +204,19 @@ class EnhancedDataPipeline:
             logging.error(f"Error creating sync_logs table: {e}")
 
     def safe_float_conversion(self, value, default=0.0):
-        """Safely convert value to float with fallback"""
+        """
+        Safely convert values to float with fallback handling.
+        
+        Args:
+            value: Value to convert to float
+            default (float): Default value if conversion fails
+            
+        Returns:
+            float: Converted value or default
+            
+        Note:
+            Handles None, empty strings, and invalid data gracefully
+        """
         if value is None or value == '' or value == 'null':
             return default
         try:
@@ -132,7 +226,16 @@ class EnhancedDataPipeline:
             return default
 
     def safe_int_conversion(self, value, default=0):
-        """Safely convert value to int with fallback"""
+        """
+        Safely convert values to integer with fallback handling.
+        
+        Args:
+            value: Value to convert to integer
+            default (int): Default value if conversion fails
+            
+        Returns:
+            int: Converted value or default
+        """
         if value is None or value == '' or value == 'null':
             return default
         try:
@@ -142,13 +245,39 @@ class EnhancedDataPipeline:
             return default
 
     def safe_string_conversion(self, value, default=''):
-        """Safely convert value to string with fallback"""
+        """
+        Safely convert values to string with fallback handling.
+        
+        Args:
+            value: Value to convert to string
+            default (str): Default value if conversion fails
+            
+        Returns:
+            str: Converted and trimmed string or default
+        """
         if value is None or value == 'null':
             return default
         return str(value).strip()
 
     def process_and_sync_products(self, api_products):
-        """Process API products and sync with database with improved error handling"""
+        """
+        Process API product data and synchronize with database.
+        
+        Handles data cleaning, validation, transformation, and database
+        operations with comprehensive error handling.
+        
+        Args:
+            api_products (list): List of product data from API
+            
+        Returns:
+            tuple: (inserted_count, updated_count, error_count)
+            
+        Features:
+        - Data validation and cleaning
+        - Change detection using hash comparison
+        - Efficient upsert operations
+        - Individual product error isolation
+        """
         if not api_products:
             return 0, 0, 0
         
@@ -241,7 +370,21 @@ class EnhancedDataPipeline:
         return inserted, updated, errors
 
     def fetch_products_from_api(self, params=None):
-        """Fetch products from API with improved error handling and timeout"""
+        """
+        Fetch product data from external API with robust error handling.
+        
+        Args:
+            params (dict, optional): Query parameters for API request
+            
+        Returns:
+            list: List of products from API or empty list on failure
+            
+        Features:
+        - HTTP Basic Authentication
+        - Timeout handling (60 seconds)
+        - Connection error recovery
+        - Detailed error logging
+        """
         url = f"{self.base_url}/products"
         
         try:
@@ -272,13 +415,36 @@ class EnhancedDataPipeline:
             logging.error(f"API request error: {e}")
             return []
 
-    def calculate_product_hash(self, product: Product) -> str:
-        """Calculate hash of product data to detect changes"""
+    def calculate_product_hash(self, product):
+        """
+        Calculate SHA256 hash of product data for change detection.
+        
+        Args:
+            product (Product): Product object to hash
+            
+        Returns:
+            str: SHA256 hash of key product fields
+            
+        Note:
+            Hash includes: code, description, price, quantity, availability
+        """
         data_string = f"{product.product_code}_{product.description}_{product.current_price}_{product.quantity_available}_{product.is_available}"
         return hashlib.sha256(data_string.encode()).hexdigest()
 
     def log_sync_operation(self, sync_type, total_fetched, inserted, updated, errors, start_time, status='completed', error_msg=None):
-        """Log synchronization operation"""
+        """
+        Log synchronization operation details to database.
+        
+        Args:
+            sync_type (str): Type of sync operation (full/incremental)
+            total_fetched (int): Number of records fetched from API
+            inserted (int): Number of new records inserted
+            updated (int): Number of existing records updated
+            errors (int): Number of errors encountered
+            start_time (datetime): Operation start timestamp
+            status (str): Operation status (completed/failed)
+            error_msg (str, optional): Error message if operation failed
+        """
         try:
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -300,7 +466,28 @@ class EnhancedDataPipeline:
             logging.error(f"Error logging sync operation: {e}")
 
     def run_full_sync(self, page_size=100, max_pages=None):
-        """Run full synchronization with improved error handling"""
+        """
+        Execute complete product synchronization from API.
+        
+        Performs comprehensive sync of all products with:
+        - Paginated API requests for memory efficiency
+        - Consecutive failure detection
+        - Progress tracking and logging
+        - Database transaction management
+        
+        Args:
+            page_size (int): Number of products per API request
+            max_pages (int, optional): Maximum pages to process
+            
+        Returns:
+            bool: True if sync completed successfully
+            
+        Features:
+        - Automatic pagination handling
+        - Failure tolerance (stops after 3 consecutive empty responses)
+        - Rate limiting between requests
+        - Comprehensive progress logging
+        """
         start_time = datetime.now()
         logging.info("Starting full product synchronization")
         
@@ -368,7 +555,20 @@ class EnhancedDataPipeline:
             self.db.disconnect()
 
     def run_incremental_sync(self, hours_back=1):
-        """Run incremental sync for recent changes"""
+        """
+        Execute incremental synchronization for recent changes.
+        
+        Lightweight sync operation for checking recent updates:
+        - Fetches smaller data subset
+        - Focuses on recent changes
+        - Suitable for frequent execution
+        
+        Args:
+            hours_back (int): Hours to look back for changes
+            
+        Returns:
+            bool: True if sync completed successfully
+        """
         start_time = datetime.now()
         logging.info(f"Starting incremental sync for last {hours_back} hours")
         
@@ -401,7 +601,21 @@ class EnhancedDataPipeline:
             self.db.disconnect()
 
     def get_marketplace_statistics(self):
-        """Get marketplace-specific statistics"""
+        """
+        Generate comprehensive marketplace statistics and metrics.
+        
+        Returns:
+            dict: Statistics including:
+                - total_products: Total number of products
+                - available_products: Number of available products
+                - price_range: Min, max, and average prices
+                - top_categories: Most popular product categories
+                - recent_syncs: Recent synchronization history
+                
+        Usage:
+            stats = pipeline.get_marketplace_statistics()
+            print(f"Total products: {stats['total_products']}")
+        """
         if not self.db.connect():
             logging.error("Database connection failed for statistics")
             return None
@@ -476,7 +690,16 @@ class EnhancedDataPipeline:
             self.db.disconnect()
 
     def setup_scheduled_sync(self):
-        """Setup scheduled synchronization"""
+        """
+        Configure scheduled synchronization jobs.
+        
+        Schedules:
+        - Full sync: Daily at 2:00 AM
+        - Incremental sync: Every 30 minutes
+        
+        Note:
+            Use start_scheduler() to begin scheduled execution
+        """
         # Full sync daily at 2 AM
         schedule.every().day.at("02:00").do(self.run_full_sync)
         
@@ -486,7 +709,16 @@ class EnhancedDataPipeline:
         logging.info("Scheduled sync jobs configured")
     
     def start_scheduler(self):
-        """Start the scheduler (run this in production)"""
+        """
+        Start the background scheduler for automatic synchronization.
+        
+        Runs continuously, executing scheduled sync operations:
+        - Monitors for scheduled jobs every minute
+        - Blocks execution (suitable for dedicated sync processes)
+        
+        Warning:
+            This method runs indefinitely - use in dedicated processes
+        """
         self.setup_scheduled_sync()
         logging.info("Scheduler started - running continuous sync")
         
