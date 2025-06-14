@@ -1,6 +1,9 @@
-from app import db
+from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from enum import Enum
+
+# Import db from parent context
+from application import db
 
 class UserStatus(Enum):
     PENDING = "pending"
@@ -18,14 +21,17 @@ class User(db.Model):
     phone = db.Column(db.String(15), unique=True, nullable=False, index=True)
     name = db.Column(db.String(100), nullable=False, index=True)
     email = db.Column(db.String(120), unique=True, nullable=True, index=True)
-    role = db.Column(db.Enum(UserRole), nullable=False, default=UserRole.CUSTOMER, index=True)
-    status = db.Column(db.Enum(UserStatus), nullable=False, default=UserStatus.PENDING, index=True)
+    # Fix enum columns to use values instead of names
+    role = db.Column(db.Enum(UserRole, values_callable=lambda x: [e.value for e in x]), 
+                     nullable=False, default=UserRole.CUSTOMER, index=True)
+    status = db.Column(db.Enum(UserStatus, values_callable=lambda x: [e.value for e in x]), 
+                       nullable=False, default=UserStatus.PENDING, index=True)
     customer_code = db.Column(db.String(50), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     last_login = db.Column(db.DateTime, nullable=True)
     
-    # MySQL table options
+    # MySQL table options - specify enum values explicitly for MySQL compatibility
     __table_args__ = {
         'mysql_engine': 'InnoDB',
         'mysql_charset': 'utf8mb4',

@@ -15,7 +15,11 @@ Flask
 requests
 Flask-SQLAlchemy==3.0.2
 gunicorn
+pymysql
+Flask-Migrate
+cryptography
 mysql-connector-python
 python-dotenv
 schedule
+
 

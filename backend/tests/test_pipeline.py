@@ -106,7 +106,7 @@ def check_prerequisites():
     
     # Check if required modules exist
     try:
-        from backend.app.utils.database import DatabaseConnection
+        from backend.application.utils.database import DatabaseConnection
         print("✅ database.py found")
     except ImportError:
         print("❌ database.py not found")

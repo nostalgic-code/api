@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
-from backend.app.utils.database import DatabaseConnection
+from backend.application.utils.database import DatabaseConnection
 from dotenv import load_dotenv
 
 load_dotenv()
