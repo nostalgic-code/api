@@ -6,6 +6,8 @@ import os
 from dotenv import load_dotenv
 import threading
 
+from backend.app.api.products import products_bp
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -14,6 +16,9 @@ app = Flask(__name__)
 USERNAME = os.getenv('API_USERNAME')
 PASSWORD = os.getenv('API_PASSWORD')
 BASE_URL = os.getenv('API_BASE_URL')
+
+# Register the products blueprint
+app.register_blueprint(products_bp)
 
 @app.route('/fetch/<resource>', methods=['GET'])
 def fetch_resource(resource):
