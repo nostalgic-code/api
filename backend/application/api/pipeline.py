@@ -52,7 +52,7 @@ Version: 1.0
 
 from flask import Blueprint, request, jsonify
 import threading
-from backend.app.pipeline import EnhancedDataPipeline
+from application.pipeline.enhanced_pipeline import EnhancedDataPipeline
 
 # Create Blueprint for pipeline routes
 pipeline_bp = Blueprint('pipeline', __name__, url_prefix='/pipeline')
@@ -199,5 +199,143 @@ def get_pipeline_stats():
             return jsonify(stats), 200
         else:
             return jsonify({"error": "Could not retrieve statistics"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@pipeline_bp.route('/marketplace/stats', methods=['GET'])
+def get_marketplace_stats():
+    """
+    Get marketplace statistics.
+    
+    Retrieves comprehensive marketplace statistics including product counts,
+    price information, and category distributions.
+    
+    Returns:
+        JSON: Marketplace statistics with 200 status
+        JSON: Error message with 500 status on failure
+    """
+    try:
+        pipeline = EnhancedDataPipeline()
+        stats = pipeline.get_marketplace_statistics()
+        
+        if stats:
+            return jsonify(stats), 200
+        else:
+            return jsonify({"error": "Could not retrieve statistics"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@pipeline_bp.route('/marketplace/products', methods=['GET'])
+def get_marketplace_products():
+    """
+    Get products for marketplace with filtering.
+    
+    Retrieves marketplace products with support for filtering, searching,
+    and pagination.
+    
+    Query Parameters:
+        category (str): Filter by category
+        brand (str): Filter by brand
+        min_price (float): Minimum price filter
+        max_price (float): Maximum price filter
+        search (str): Search in description and brand
+        available_only (bool): Show only available products (default: true)
+        page (int): Page number for pagination (default: 1)
+        limit (int): Items per page (default: 20)
+    
+    Returns:
+        JSON: Products with pagination info and 200 status
+        JSON: Error message with 500 status on failure
+    """
+    try:
+        from application.utils.database import DatabaseConnection
+        
+        # Get query parameters
+        category = request.args.get('category')
+        brand = request.args.get('brand')
+        min_price = request.args.get('min_price', type=float)
+        max_price = request.args.get('max_price', type=float)
+        search = request.args.get('search')
+        available_only = request.args.get('available_only', 'true').lower() == 'true'
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 20, type=int)
+        
+        db = DatabaseConnection()
+        if not db.connect():
+            return jsonify({"error": "Database connection failed"}), 500
+        
+        # Build query
+        where_conditions = []
+        params = []
+        
+        if available_only:
+            where_conditions.append("is_available = TRUE")
+        
+        if category:
+            where_conditions.append("category = %s")
+            params.append(category)
+        
+        if brand:
+            where_conditions.append("brand = %s")
+            params.append(brand)
+        
+        if min_price is not None:
+            where_conditions.append("current_price >= %s")
+            params.append(min_price)
+        
+        if max_price is not None:
+            where_conditions.append("current_price <= %s")
+            params.append(max_price)
+        
+        if search:
+            where_conditions.append("(description LIKE %s OR brand LIKE %s)")
+            search_term = f"%{search}%"
+            params.extend([search_term, search_term])
+        
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        
+        # Count total
+        count_query = f"SELECT COUNT(*) FROM marketplace_products WHERE {where_clause}"
+        total_result = db.execute_query(count_query, params)
+        total = total_result[0][0] if total_result else 0
+        
+        # Get products
+        offset = (page - 1) * limit
+        query = f"""
+            SELECT product_code, description, category, brand, current_price, 
+                   quantity_available, unit_of_measure, part_numbers
+            FROM marketplace_products 
+            WHERE {where_clause}
+            ORDER BY brand, description
+            LIMIT %s OFFSET %s
+        """
+        params.extend([limit, offset])
+        
+        products = db.execute_query(query, params)
+        
+        result = {
+            "products": [
+                {
+                    "product_code": row[0],
+                    "description": row[1],
+                    "category": row[2],
+                    "brand": row[3],
+                    "price": float(row[4]),
+                    "quantity_available": row[5],
+                    "unit_of_measure": row[6],
+                    "part_numbers": row[7] if row[7] else []
+                } for row in products
+            ],
+            "pagination": {
+                "current_page": page,
+                "total_pages": (total + limit - 1) // limit,
+                "total_items": total,
+                "items_per_page": limit
+            }
+        }
+        
+        db.disconnect()
+        return jsonify(result), 200
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500

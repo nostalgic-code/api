@@ -3,7 +3,7 @@ from requests.auth import HTTPBasicAuth
 import json
 import logging
 from datetime import datetime
-from backend.app.utils.database_sqlite import SQLiteConnection
+from backend.application.utils.database_sqlite import SQLiteConnection
 import os
 from dotenv import load_dotenv
 
