@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 from requests.auth import HTTPBasicAuth
-from backend.pipeline.enhanced_pipeline import EnhancedDataPipeline
+from backend.app.pipeline.enhanced_pipeline import EnhancedDataPipeline
 import os
 from dotenv import load_dotenv
 import threading
