@@ -1,14 +1,16 @@
 """
-App package initialization
+Application Package Initialization
+
+This module initializes the Flask application components and makes
+the database instance available to all modules.
 """
 
 from flask_sqlalchemy import SQLAlchemy
 
+# Initialize database instance
 db = SQLAlchemy()
 
-def set_db(database):
-    """Set the database instance"""
-    global db
-    db = database
+# Make commonly used imports available at package level
+from .utils.database import DatabaseConnection
 
-__all__ = ['db', 'set_db']
+__all__ = ['db', 'DatabaseConnection']

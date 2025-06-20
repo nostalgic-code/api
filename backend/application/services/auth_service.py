@@ -41,6 +41,7 @@ from application import db
 from application.models.user import User
 from application.models.user_otp import UserOTP
 from application.models.user_session import UserSession
+from application.services.sms_service import sms_service  # Import SMS service
 
 class AuthService:
     """
@@ -118,6 +119,7 @@ class AuthService:
             
             if sms_sent:
                 logging.info(f"OTP sent successfully to {phone}")
+                logging.info(f"OTP: {otp} (hashed: {hashed_otp})")
                 return {
                     'success': True,
                     'message': f'OTP sent to {phone}',
@@ -261,11 +263,17 @@ class AuthService:
         return bool(re.match(pattern, phone))
     
     def _send_sms(self, phone: str, otp: str) -> bool:
-        """Send SMS with OTP (mock implementation)"""
+        """Send SMS with OTP using BulkSMS service"""
         try:
-            message = f"Your OTP code is: {otp}. Valid for {self.otp_expiry_minutes} minutes."
-            logging.info(f"SMS to {phone}: {message}")
-            return True  # Mock success
+            # Use the SMS service to send OTP
+            success = sms_service.send_otp(phone, otp)
+            
+            if success:
+                logging.info(f"OTP SMS sent successfully to {phone}")
+            else:
+                logging.error(f"Failed to send OTP SMS to {phone}")
+                
+            return success
             
         except Exception as e:
             logging.error(f"Error sending SMS to {phone}: {e}")

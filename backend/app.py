@@ -7,294 +7,181 @@ external services using HTTP Basic Authentication.
 """
 
 import os
-import requests
-from flask import Flask, request, jsonify, send_from_directory
-from flask_sqlalchemy import SQLAlchemy
+import sys
+import logging
+from flask import Flask
 from flask_migrate import Migrate
-from requests.auth import HTTPBasicAuth
+from flask_cors import CORS
 from dotenv import load_dotenv
-from datetime import datetime
-from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Initialize extensions
-db = SQLAlchemy()
+# Add the backend directory to Python path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import db from application package
+from application import db
+from application.config import DevelopmentConfig, ProductionConfig
+
+# Initialize migrate
 migrate = Migrate()
 
-def create_app():
+def create_app(config_name=None):
     """Create and configure Flask application"""
     app = Flask(__name__)
     
-    # Configure app
-    configure_app(app)
+    # Load configuration
+    if config_name is None:
+        config_name = os.getenv('FLASK_ENV', 'development')
     
-    # Initialize extensions
+    if config_name == 'production':
+        app.config.from_object(ProductionConfig)
+    else:
+        app.config.from_object(DevelopmentConfig)
+    
+    # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
     
-    # Make db available globally for models
-    import application as app_module
-    app_module.db = db
+    # Configure CORS properly
+    CORS(app, resources={
+        r"/*": {
+            "origins": "*",
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
     
-    # Import models after db is available
+    # Configure logging
+    configure_logging(app)
+    
+    # Register blueprints
+    register_blueprints(app)
+    
+    # Register error handlers
+    register_error_handlers(app)
+    
+    # Create database tables within app context
     with app.app_context():
+        # Import models to ensure they're registered with SQLAlchemy
         from application.models import user, user_otp, user_session, product
-        # Create all database tables
+        
+        # Create tables if they don't exist
         db.create_all()
-    
-    # Import and register blueprints after models are loaded
-    from application.api.auth import auth_bp
-    from application.api.pipeline import pipeline_bp
-    
-    app.register_blueprint(auth_bp, url_prefix='/auth')
-    app.register_blueprint(pipeline_bp)
-    
-    # Register routes
-    register_routes(app)
+        
+        app.logger.info(f"Database initialized: {app.config['SQLALCHEMY_DATABASE_URI']}")
     
     return app
 
-def configure_app(app):
-    """Configure Flask application settings"""
-    # Set JSON configuration
-    app.config['JSON_SORT_KEYS'] = False
-    app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
+def configure_logging(app):
+    """Configure application logging"""
+    # Remove default Flask logger handlers
+    app.logger.handlers = []
     
-    # Security configuration
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     
-    # Database configuration - environment-based switching
-    if os.getenv('FLASK_ENV') == 'production':
-        # MySQL for production - Using DB_* variables
-        MYSQL_USER = os.getenv('DB_USER', 'root')
-        MYSQL_PASSWORD = os.getenv('DB_PASSWORD', '')
-        MYSQL_HOST = os.getenv('DB_HOST', 'localhost')
-        MYSQL_DB = os.getenv('DB_NAME', 'autospares_marketplace')
-        app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}/{MYSQL_DB}'
-        
-        # Validate required environment variables
-        required_vars = ['DB_HOST', 'DB_NAME', 'DB_USER']
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-        if missing_vars:
-            print(f"Warning: Missing database environment variables: {', '.join(missing_vars)}")
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    
+    # Set log level based on environment
+    if app.config['DEBUG']:
+        app.logger.setLevel(logging.DEBUG)
+        console_handler.setLevel(logging.DEBUG)
     else:
-        # SQLite for development - Create absolute path and ensure directory exists
-        backend_dir = Path(__file__).parent  # Get backend directory
-        instance_dir = backend_dir / 'instance'
-        
-        # Create instance directory if it doesn't exist
-        instance_dir.mkdir(exist_ok=True)
-        
-        # Use absolute path for SQLAlchemy
-        db_path = instance_dir / 'pipeline_data.db'
-        app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
-        
-        print(f"SQLite database will be created at: {db_path}")
+        app.logger.setLevel(logging.INFO)
+        console_handler.setLevel(logging.INFO)
     
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.logger.addHandler(console_handler)
     
-    # API configuration validation
-    required_api_vars = ['API_USERNAME', 'API_PASSWORD', 'API_BASE_URL']
-    missing_api_vars = [var for var in required_api_vars if not os.getenv(var)]
-    if missing_api_vars:
-        print(f"Warning: Missing API environment variables: {', '.join(missing_api_vars)}")
+    # Optionally add file handler for production
+    if not app.config['DEBUG']:
+        file_handler = logging.FileHandler('app.log')
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.ERROR)
+        app.logger.addHandler(file_handler)
 
-def register_routes(app):
-    """Register application routes"""
-    from application.utils.database import DatabaseConnection
+def register_blueprints(app):
+    """Register all application blueprints"""
+    # Import blueprints
+    from application.api.auth import auth_bp
+    from application.api.pipeline import pipeline_bp
+    from application.api.common import common_bp
     
-    # Configuration for external API
-    USERNAME = os.getenv('API_USERNAME')
-    PASSWORD = os.getenv('API_PASSWORD')
-    BASE_URL = os.getenv('API_BASE_URL')
+    # Register blueprints with URL prefixes
+    app.register_blueprint(auth_bp, url_prefix='/auth')
+    app.register_blueprint(pipeline_bp, url_prefix='/pipeline')
+    app.register_blueprint(common_bp)  # Common routes like health, schema, etc.
     
-    # CORS configuration for cross-origin requests
-    @app.after_request
-    def after_request(response):
-        """Add CORS headers to all responses"""
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        return response
+    app.logger.info("Blueprints registered successfully")
 
-    # Health check endpoint
-    @app.route('/health', methods=['GET'])
-    def health_check():
-        """Health check endpoint for monitoring application status."""
-        try:
-            # Test database connection using unified DatabaseConnection
-            db_conn = DatabaseConnection()
-            db_status = db_conn.test_connection()
-            
-            return jsonify({
-                "status": "healthy",
-                "timestamp": datetime.now().isoformat(),
-                "database": {
-                    "connected": db_status.get('connected', False),
-                    "database": db_status.get('database', 'unknown'),
-                    "type": db_status.get('db_type', 'unknown'),
-                    "version": db_status.get('version', 'unknown'),
-                    "can_create_tables": db_status.get('can_create_tables', False)
-                },
-                "environment": {
-                    "flask_env": os.getenv('FLASK_ENV', 'development'),
-                    "api_configured": bool(USERNAME and PASSWORD and BASE_URL),
-                    "database_type": "MySQL" if os.getenv('FLASK_ENV') == 'production' else "SQLite"
-                }
-            }), 200
-        except Exception as e:
-            return jsonify({
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }), 500
+def register_error_handlers(app):
+    """Register global error handlers"""
+    
+    @app.errorhandler(404)
+    def not_found_error(error):
+        return {"error": "Resource not found", "code": 404}, 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        db.session.rollback()
+        app.logger.error(f"Internal error: {error}")
+        return {"error": "Internal server error", "code": 500}, 500
+    
+    @app.errorhandler(Exception)
+    def unhandled_exception(error):
+        db.session.rollback()
+        app.logger.error(f"Unhandled exception: {error}", exc_info=True)
+        if app.config['DEBUG']:
+            return {"error": str(error), "code": 500}, 500
+        return {"error": "An unexpected error occurred", "code": 500}, 500
 
-    @app.route('/fetch/<resource>', methods=['GET'])
-    def fetch_resource(resource):
-        """Fetch data from external API (original functionality)"""
-        url = f"{BASE_URL}/{resource}"
-        query_params = request.args.to_dict()
-
-        try:
-            response = requests.get(
-                url,
-                auth=HTTPBasicAuth(USERNAME, PASSWORD),
-                headers={"Accept": "application/json"},
-                params=query_params,
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                return jsonify(response.json()), 200
-            else:
-                return jsonify({
-                    "error": f"HTTP {response.status_code}",
-                    "message": response.reason
-                }), response.status_code
-
-        except requests.exceptions.RequestException as e:
-            return jsonify({"error": "Request failed", "message": str(e)}), 500
-
-    @app.route('/dashboard')
-    def dashboard():
-        """Serve the dashboard HTML file"""
-        return send_from_directory('static', 'dashboard.html')
-
-    @app.route('/schema', methods=['GET'])
-    def get_schema():
-        """Get database schema information using unified DatabaseConnection"""
-        try:
-            from application.utils.database import DatabaseConnection
-            
-            db_conn = DatabaseConnection()
-            schema_info = {
-                "database_type": "MySQL" if db_conn.is_production else "SQLite",
-                "database_uri": app.config['SQLALCHEMY_DATABASE_URI'],
-                "tables": {}
-            }
-            
-            if db_conn.connect():
-                try:
-                    if db_conn.is_production:
-                        # MySQL specific queries
-                        result = db_conn.execute_query("SHOW TABLES")
-                        tables = [row[0] for row in result] if result else []
-                        
-                        for table in tables:
-                            result = db_conn.execute_query(f"DESCRIBE {table}")
-                            columns = []
-                            for col in result:
-                                columns.append({
-                                    "name": col[0],
-                                    "type": col[1],
-                                    "null": col[2],
-                                    "key": col[3],
-                                    "default": col[4],
-                                    "extra": col[5]
-                                })
-                            schema_info["tables"][table] = {"columns": columns}
-                    else:
-                        # SQLite specific queries
-                        result = db_conn.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
-                        tables = [row[0] for row in result] if result else []
-                        
-                        for table in tables:
-                            result = db_conn.execute_query(f"PRAGMA table_info({table})")
-                            columns = []
-                            for col in result:
-                                columns.append({
-                                    "name": col[1],
-                                    "type": col[2],
-                                    "not_null": bool(col[3]),
-                                    "default": col[4],
-                                    "primary_key": bool(col[5])
-                                })
-                            schema_info["tables"][table] = {"columns": columns}
-                            
-                finally:
-                    db_conn.disconnect()
-            
-            return jsonify(schema_info), 200
-            
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route('/')
-    def home():
-        """Root endpoint providing API information and available endpoints"""
-        return jsonify({
-            "message": "Autospares Marketplace API",
-            "version": "2.0",
-            "endpoints": {
-                "health": "/health",
-                "auth": "/auth/*",
-                "pipeline": "/pipeline/*",
-                "dashboard": "/dashboard",
-                "schema": "/schema"
-            },
-            "environment": os.getenv('FLASK_ENV', 'development'),
-            "database": "MySQL" if os.getenv('FLASK_ENV') == 'production' else "SQLite"
-        })
-
-# Create the app instance for Flask CLI
+# Create the app instance
 app = create_app()
 
 if __name__ == '__main__':
-    # Test database connection on startup using unified DatabaseConnection
+    # Test database connection on startup
+    from application.utils.database import DatabaseConnection
+    
+    print("\n" + "="*60)
+    print("🚀 AUTOSPARES MARKETPLACE API")
+    print("="*60)
+    
+    # Test database connection
     try:
-        from application.utils.database import DatabaseConnection
         db_conn = DatabaseConnection()
         db_test = db_conn.test_connection()
         
         if db_test.get('connected'):
-            print(f"✓ Database connection successful: {db_test.get('database')} ({db_test.get('db_type')})")
-            if db_test.get('can_create_tables'):
-                print("✓ Database permissions: Can create tables")
-            else:
-                print("⚠ Database permissions: Limited access")
+            print(f"✓ Database: {db_test.get('database')}")
+            print(f"✓ Type: {db_test.get('db_type')}")
+            print(f"✓ Version: {db_test.get('version')}")
         else:
             print(f"✗ Database connection failed: {db_test.get('error', 'Unknown error')}")
-            
     except Exception as e:
-        print(f"✗ Database connection error: {e}")
+        print(f"✗ Database test error: {e}")
     
-    # Start Flask application
-    print("\n" + "="*50)
-    print("🚀 Starting Flask Development Server")
-    print("="*50)
+    # Display server information
+    print("\n" + "-"*60)
     print(f"Environment: {os.getenv('FLASK_ENV', 'development')}")
-    print(f"Database: {'MySQL' if os.getenv('FLASK_ENV') == 'production' else 'SQLite'}")
-    print(f"Debug mode: {os.getenv('FLASK_ENV') != 'production'}")
-    print(f"Server: http://127.0.0.1:5000")
-    print(f"Health check: http://127.0.0.1:5000/health")
-    print(f"Schema info: http://127.0.0.1:5000/schema")
-    print(f"API docs: http://127.0.0.1:5000/")
-    print("="*50)
+    print(f"Debug Mode: {app.config['DEBUG']}")
+    print(f"Server URL: http://127.0.0.1:5000")
+    print("-"*60)
+    print("\nAvailable Endpoints:")
+    print("  • Health Check: http://127.0.0.1:5000/health")
+    print("  • API Info: http://127.0.0.1:5000/")
+    print("  • Schema Info: http://127.0.0.1:5000/schema")
+    print("  • Auth API: http://127.0.0.1:5000/auth/*")
+    print("  • Pipeline API: http://127.0.0.1:5000/pipeline/*")
+    print("="*60 + "\n")
     
+    # Run the application
     app.run(
-        debug=os.getenv('FLASK_ENV') != 'production',
         host='127.0.0.1',
-        port=5000
+        port=5000,
+        debug=app.config['DEBUG']
     )
