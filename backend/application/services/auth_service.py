@@ -2,64 +2,53 @@
 Authentication Service Module
 
 This module provides authentication functionality for the marketplace application,
-using SQLAlchemy models for database operations.
+supporting both CustomerUsers and PlatformUsers.
 
 Key Features:
+- Multi-user type authentication (CustomerUser and PlatformUser)
 - Phone number based authentication
 - OTP generation and verification
 - User status and role validation
 - SMS integration for OTP delivery
-- Session token generation
-- Uses SQLAlchemy models (no custom database handling)
+- Session token generation with user type tracking
+- Enhanced session payload with permissions
 
 Classes:
     AuthService: Main authentication service class
 
-Dependencies:
-    - SQLAlchemy models for database operations
-    - SMS service for OTP delivery
-    - Random number generation for OTP
-    - Datetime for expiration handling
-
-Usage:
-    auth_service = AuthService()
-    result = auth_service.send_otp(phone_number)
-
 Author: Development Team
-Version: 2.0
+Version: 4.0
 """
 
+import re
 import random
 import string
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Optional, Union
 import logging
 import hashlib
 import secrets
 
 from application import db
-from application.models.user import User
+from application.models.customer_user import CustomerUser, CustomerUserStatus
+from application.models.platform_user import PlatformUser
 from application.models.user_otp import UserOTP
 from application.models.user_session import UserSession
-from application.services.sms_service import sms_service  # Import SMS service
+from application.models.permission_code import PermissionCode
+from application.services.sms_service import sms_service
 
 class AuthService:
     """
     Authentication service for phone-based OTP authentication.
     
-    Handles user authentication flow using SQLAlchemy models.
+    Handles both CustomerUser and PlatformUser authentication flows.
     """
     
     def __init__(self):
         """Initialize authentication service"""
-        self.otp_expiry_minutes = 5  # OTP expires in 5 minutes
+        self.otp_expiry_minutes = 5
         self.otp_length = 6
-        
-        # Setup logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
+        self.logger = logging.getLogger(__name__)
     
     def generate_otp(self) -> str:
         """Generate a random OTP code."""
@@ -70,7 +59,7 @@ class AuthService:
         return hashlib.sha256(otp.encode()).hexdigest()
     
     def send_otp(self, phone: str) -> Dict:
-        """Send OTP to user's phone number."""
+        """Send OTP to user's phone number (supports both user types)."""
         try:
             # Validate phone number format
             if not self._validate_phone(phone):
@@ -80,8 +69,9 @@ class AuthService:
                     'error_code': 'INVALID_PHONE'
                 }
             
-            # Check if user exists and is approved
-            user = User.find_by_phone(phone)
+            # Find user in either table
+            user, user_type = self._find_user_by_phone(phone)
+            
             if not user:
                 return {
                     'success': False,
@@ -89,14 +79,14 @@ class AuthService:
                     'error_code': 'USER_NOT_FOUND'
                 }
             
-            if not user.is_approved():
-                return {
-                    'success': False,
-                    'message': 'Account not approved. Please contact administrator.',
-                    'error_code': 'USER_NOT_APPROVED'
-                }
+            # Validate user status based on type
+            if user_type == 'customer_user':
+                validation = self._validate_customer_user_status(user)
+                if not validation['valid']:
+                    return validation
+            # Platform users don't need status validation
             
-            # Generate OTP
+            # Generate and store OTP
             otp = self.generate_otp()
             hashed_otp = self.hash_otp(otp)
             expires_at = datetime.utcnow() + timedelta(minutes=self.otp_expiry_minutes)
@@ -118,12 +108,11 @@ class AuthService:
             sms_sent = self._send_sms(phone, otp)
             
             if sms_sent:
-                logging.info(f"OTP sent successfully to {phone}")
-                logging.info(f"OTP: {otp} (hashed: {hashed_otp})")
+                self.logger.info(f"OTP sent successfully to {phone} ({user_type})")
                 return {
                     'success': True,
                     'message': f'OTP sent to {phone}',
-                    'expires_in': self.otp_expiry_minutes * 60  # seconds
+                    'expires_in': self.otp_expiry_minutes * 60
                 }
             else:
                 return {
@@ -133,7 +122,7 @@ class AuthService:
                 }
                 
         except Exception as e:
-            logging.error(f"Error sending OTP to {phone}: {e}")
+            self.logger.error(f"Error sending OTP to {phone}: {e}")
             db.session.rollback()
             return {
                 'success': False,
@@ -142,7 +131,7 @@ class AuthService:
             }
     
     def verify_otp(self, phone: str, otp: str) -> Dict:
-        """Verify OTP and authenticate user."""
+        """Verify OTP and authenticate user (supports both user types)."""
         try:
             # Get stored OTP
             user_otp = UserOTP.query.filter(
@@ -177,46 +166,67 @@ class AuthService:
                 }
             
             # OTP is valid, get user data
-            user = User.get_approved_user_by_phone(phone)
+            user, user_type = self._find_user_by_phone(phone)
+            
             if not user:
                 return {
                     'success': False,
-                    'message': 'User not found or not approved',
+                    'message': 'User not found',
                     'error_code': 'USER_NOT_FOUND'
                 }
+            
+            # Final validation for customer users
+            if user_type == 'customer_user':
+                validation = self._validate_customer_user_status(user)
+                if not validation['valid']:
+                    return validation
             
             # Generate session token
             session_token = self._generate_session_token()
             
             # Update last login
-            user.update_last_login()
+            user.last_login = datetime.utcnow()
+            user.updated_at = datetime.utcnow()
             
             # Clear used OTP
             UserOTP.query.filter_by(phone=phone).delete()
             
-            # Clear existing sessions and store new session
-            UserSession.query.filter_by(user_id=user.id).delete()
+            # Clear existing sessions for this user
+            UserSession.query.filter_by(
+                user_id=user.id, 
+                user_type=user_type
+            ).delete()
             
-            expires_at = datetime.utcnow() + timedelta(hours=24)  # 24 hour session
+            # Create new session
+            expires_at = datetime.utcnow() + timedelta(hours=24)
             user_session = UserSession(
                 user_id=user.id,
+                user_type=user_type,
                 session_token=session_token,
                 expires_at=expires_at
             )
             db.session.add(user_session)
             db.session.commit()
             
-            logging.info(f"User {phone} authenticated successfully")
+            self.logger.info(f"User {phone} ({user_type}) authenticated successfully")
             
-            return {
+            # Build response based on user type
+            response = {
                 'success': True,
                 'message': 'Authentication successful',
-                'user': user.to_dict(),
-                'session_token': session_token
+                'session_token': session_token,
+                'user_type': user_type
             }
             
+            if user_type == 'customer_user':
+                response['user'] = self._build_customer_user_payload(user)
+            else:
+                response['user'] = self._build_platform_user_payload(user)
+            
+            return response
+            
         except Exception as e:
-            logging.error(f"Error verifying OTP for {phone}: {e}")
+            self.logger.error(f"Error verifying OTP for {phone}: {e}")
             db.session.rollback()
             return {
                 'success': False,
@@ -232,16 +242,35 @@ class AuthService:
                 UserSession.expires_at > datetime.utcnow()
             ).first()
             
-            if session and session.user.is_approved():
-                return {
-                    'valid': True,
-                    'user': session.user.to_dict()
-                }
-            else:
+            if not session:
                 return {'valid': False, 'error': 'Invalid or expired session'}
-                
+            
+            # Get the user based on user_type
+            user = session.user  # This uses the polymorphic property
+            
+            if not user:
+                return {'valid': False, 'error': 'User not found'}
+            
+            # Build response based on user type
+            response = {
+                'valid': True,
+                'user_type': session.user_type
+            }
+            
+            if session.user_type == 'customer_user':
+                # Additional validation for customer users
+                if user.status != CustomerUserStatus.APPROVED:
+                    return {'valid': False, 'error': 'User not approved'}
+                if user.customer.status.value != 'approved':
+                    return {'valid': False, 'error': 'Customer not active'}
+                response['user'] = self._build_customer_user_payload(user)
+            else:
+                response['user'] = self._build_platform_user_payload(user)
+            
+            return response
+            
         except Exception as e:
-            logging.error(f"Error validating session: {e}")
+            self.logger.error(f"Error validating session: {e}")
             return {'valid': False, 'error': 'Session validation failed'}
     
     def logout(self, session_token: str) -> bool:
@@ -252,31 +281,113 @@ class AuthService:
             return result > 0
             
         except Exception as e:
-            logging.error(f"Error during logout: {e}")
+            self.logger.error(f"Error during logout: {e}")
             db.session.rollback()
             return False
     
+    # Helper methods
+    def _find_user_by_phone(self, phone: str) -> tuple[Optional[Union[CustomerUser, PlatformUser]], Optional[str]]:
+        """Find user in either CustomerUser or PlatformUser table"""
+        # Check CustomerUser first
+        customer_user = CustomerUser.query.filter_by(phone=phone).first()
+        if customer_user:
+            return customer_user, 'customer_user'
+        
+        # Check PlatformUser
+        platform_user = PlatformUser.query.filter_by(phone=phone).first()
+        if platform_user:
+            return platform_user, 'platform_user'
+        
+        return None, None
+    
+    def _validate_customer_user_status(self, user: CustomerUser) -> Dict:
+        """Validate customer user and their parent customer status"""
+        if user.status != CustomerUserStatus.APPROVED:
+            return {
+                'valid': False,
+                'success': False,
+                'message': 'Your account is pending approval.',
+                'error_code': 'USER_NOT_APPROVED'
+            }
+        
+        if user.customer.status.value != 'approved':
+            return {
+                'valid': False,
+                'success': False,
+                'message': 'Customer account is not active.',
+                'error_code': 'CUSTOMER_NOT_ACTIVE'
+            }
+        
+        return {'valid': True}
+    
+    def _build_customer_user_payload(self, user: CustomerUser) -> Dict:
+        """Build enhanced payload for customer users"""
+        # Get effective permissions
+        effective_permissions = self._calculate_effective_permissions(user)
+        
+        return {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'phone': user.phone,
+            'customer_id': user.customer_id,
+            'customer_name': user.customer.name if user.customer else None,
+            'role': user.role.value if user.role else None,
+            'permissions': effective_permissions,
+            'depot_access': user.depot_access or [],
+            'status': user.status.value if user.status else None,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'last_login': user.last_login.isoformat() if user.last_login else None
+        }
+    
+    def _build_platform_user_payload(self, user: PlatformUser) -> Dict:
+        """Build payload for platform users"""
+        return {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'phone': user.phone,
+            'role': user.role.value if user.role else None,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'last_login': user.last_login.isoformat() if user.last_login else None
+        }
+    
+    def _calculate_effective_permissions(self, user: CustomerUser) -> Dict:
+        """Calculate effective permissions by merging default and custom"""
+        permissions = {}
+        
+        # Start with permission code defaults if available
+        if user.permission_code:
+            permission_code = PermissionCode.query.get(user.permission_code)
+            if permission_code and permission_code.default_permissions:
+                permissions = permission_code.default_permissions.copy()
+        
+        # Override with custom permissions
+        if user.permissions:
+            for key, value in user.permissions.items():
+                if isinstance(value, dict) and key in permissions:
+                    permissions[key].update(value)
+                else:
+                    permissions[key] = value
+        
+        return permissions
+    
     def _validate_phone(self, phone: str) -> bool:
         """Validate phone number format"""
-        import re
         pattern = r'^(\+27|0)[0-9]{9}$'
         return bool(re.match(pattern, phone))
     
     def _send_sms(self, phone: str, otp: str) -> bool:
         """Send SMS with OTP using BulkSMS service"""
         try:
-            # Use the SMS service to send OTP
             success = sms_service.send_otp(phone, otp)
-            
             if success:
-                logging.info(f"OTP SMS sent successfully to {phone}")
+                self.logger.info(f"SMS sent successfully to {phone}")
             else:
-                logging.error(f"Failed to send OTP SMS to {phone}")
-                
+                self.logger.error(f"Failed to send SMS to {phone}")
             return success
-            
         except Exception as e:
-            logging.error(f"Error sending SMS to {phone}: {e}")
+            self.logger.error(f"Error sending SMS to {phone}: {e}")
             return False
     
     def _generate_session_token(self) -> str:
