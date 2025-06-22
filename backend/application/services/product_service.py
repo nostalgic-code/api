@@ -91,7 +91,7 @@ class ProductService:
     def _get_db_connection(self):
         """Get database connection with error handling"""
         try:
-            from backend.app.utils.database import DatabaseConnection
+            from backend.application.utils.database import DatabaseConnection
             db = DatabaseConnection()
             if not db.connect():
                 raise Exception("Database connection failed")

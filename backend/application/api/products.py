@@ -36,7 +36,7 @@ Version: 1.0
 """
 
 from flask import Blueprint, request, jsonify
-from backend.app.services.product_service import ProductService
+from application.services.product_service import ProductService
 
 products_bp = Blueprint('products', __name__, url_prefix='/products')
 service = ProductService()

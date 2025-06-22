@@ -2,7 +2,7 @@
 Enhanced Data Pipeline Module
 
 This module provides comprehensive data synchronization between external APIs
-and the local marketplace database. It handles full and incremental syncs,
+and the local products database. It handles full and incremental syncs,
 data transformation, error handling, and scheduling.
 
 Key Features:
@@ -19,7 +19,7 @@ Classes:
 
 Dependencies:
     - requests: HTTP client for API communication
-    - mysql-connector-python: Database operations
+    - database: Unified database operations
     - schedule: Job scheduling
     - hashlib: Data change detection
     - logging: Operation monitoring
@@ -49,8 +49,8 @@ import schedule
 import time
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta
-from utils.database import DatabaseConnection
-from models.product import Product
+from application.utils.database import DatabaseConnection
+from application.models.product import Product
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -97,12 +97,12 @@ class EnhancedDataPipeline:
 
     def create_optimized_products_table(self):
         """
-        Create optimized marketplace products table with proper indexing.
+        Create optimized products table with proper indexing.
         
         Creates a comprehensive products table with:
-        - Full text search capabilities
+        - Full text search capabilities (MySQL) or FTS (SQLite)
         - Optimized indexes for common queries
-        - JSON storage for flexible part numbers
+        - JSON/TEXT storage for flexible part numbers
         - Change tracking with hash fields
         - Timestamp tracking for sync operations
         
@@ -110,53 +110,89 @@ class EnhancedDataPipeline:
             Table is created only if it doesn't exist to prevent data loss
         """
         try:
-            # Check if table exists first
-            check_table_query = """
-                SELECT COUNT(*) 
-                FROM information_schema.tables 
-                WHERE table_schema = DATABASE() 
-                AND table_name = 'marketplace_products'
-            """
-            result = self.db.execute_query(check_table_query)
-            
-            if result and result[0][0] > 0:
-                logging.info("marketplace_products table already exists, skipping creation")
-                return
-            
-            # Create table only if it doesn't exist
-            schema = """
-                CREATE TABLE IF NOT EXISTS marketplace_products (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    product_code VARCHAR(100) NOT NULL UNIQUE,
-                    description TEXT NOT NULL,
-                    category VARCHAR(100) NOT NULL,
-                    brand VARCHAR(100) NOT NULL,
-                    base_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-                    current_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-                    quantity_available INT NOT NULL DEFAULT 0,
-                    branch_code VARCHAR(50) NOT NULL,
-                    is_available BOOLEAN DEFAULT FALSE,
-                    part_numbers JSON,
-                    unit_of_measure VARCHAR(20),
-                    data_hash VARCHAR(64),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            if self.db.connect():
+                try:
+                    if self.db.is_production:
+                        # MySQL schema for production
+                        schema = """
+                        CREATE TABLE IF NOT EXISTS products (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            product_code VARCHAR(100) NOT NULL UNIQUE,
+                            description TEXT,
+                            category VARCHAR(100),
+                            brand VARCHAR(100),
+                            base_price DECIMAL(10,2) DEFAULT 0.00,
+                            current_price DECIMAL(10,2) DEFAULT 0.00,
+                            quantity_available INT DEFAULT 0,
+                            branch_code VARCHAR(50),
+                            is_available BOOLEAN DEFAULT FALSE,
+                            part_numbers JSON,
+                            unit_of_measure VARCHAR(20),
+                            data_hash VARCHAR(64),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                            last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                            INDEX idx_product_code (product_code),
+                            INDEX idx_category (category),
+                            INDEX idx_brand (brand),
+                            INDEX idx_price (current_price),
+                            INDEX idx_available (is_available),
+                            INDEX idx_branch (branch_code),
+                            INDEX idx_hash (data_hash),
+                            INDEX idx_last_sync (last_sync),
+                            FULLTEXT idx_description (description)
+                        )
+                        """
+                    else:
+                        # SQLite schema for development
+                        schema = """
+                        CREATE TABLE IF NOT EXISTS products (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            product_code TEXT NOT NULL UNIQUE,
+                            description TEXT,
+                            category TEXT,
+                            brand TEXT,
+                            base_price REAL DEFAULT 0.00,
+                            current_price REAL DEFAULT 0.00,
+                            quantity_available INTEGER DEFAULT 0,
+                            branch_code TEXT,
+                            is_available BOOLEAN DEFAULT 0,
+                            part_numbers TEXT,
+                            unit_of_measure TEXT,
+                            data_hash TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """
                     
-                    INDEX idx_category (category),
-                    INDEX idx_brand (brand),
-                    INDEX idx_available (is_available),
-                    INDEX idx_branch (branch_code),
-                    INDEX idx_price (current_price),
-                    INDEX idx_last_sync (last_sync),
-                    FULLTEXT idx_search (description, brand)
-                )
-            """
-            self.db.execute_query(schema)
-            logging.info("marketplace_products table created successfully")
+                    self.db.execute_query(schema)
+                    
+                    # Create indexes separately for SQLite compatibility
+                    if not self.db.is_production:
+                        indexes = [
+                            "CREATE INDEX IF NOT EXISTS idx_product_code ON products(product_code)",
+                            "CREATE INDEX IF NOT EXISTS idx_category ON products(category)",
+                            "CREATE INDEX IF NOT EXISTS idx_brand ON products(brand)",
+                            "CREATE INDEX IF NOT EXISTS idx_price ON products(current_price)",
+                            "CREATE INDEX IF NOT EXISTS idx_available ON products(is_available)",
+                            "CREATE INDEX IF NOT EXISTS idx_branch ON products(branch_code)",
+                            "CREATE INDEX IF NOT EXISTS idx_hash ON products(data_hash)",
+                            "CREATE INDEX IF NOT EXISTS idx_last_sync ON products(last_sync)"
+                        ]
+                        
+                        for index_sql in indexes:
+                            try:
+                                self.db.execute_query(index_sql)
+                            except Exception as e:
+                                logging.warning(f"Index creation failed (may already exist): {e}")
+                    
+                    logging.info("products table created successfully")
+                finally:
+                    self.db.disconnect()
             
         except Exception as e:
-            logging.error(f"Error creating marketplace_products table: {e}")
+            logging.error(f"Error creating products table: {e}")
 
     def create_sync_log_table(self):
         """
@@ -169,36 +205,63 @@ class EnhancedDataPipeline:
         - Status and error details
         """
         try:
-            # Check if table exists first
-            check_table_query = """
-                SELECT COUNT(*) 
-                FROM information_schema.tables 
-                WHERE table_schema = DATABASE() 
-                AND table_name = 'sync_logs'
-            """
-            result = self.db.execute_query(check_table_query)
-            
-            if result and result[0][0] > 0:
-                logging.info("sync_logs table already exists, skipping creation")
-                return
-            
-            # Create table only if it doesn't exist
-            schema = """
-                CREATE TABLE IF NOT EXISTS sync_logs (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    sync_type VARCHAR(20) NOT NULL,
-                    total_fetched INT DEFAULT 0,
-                    total_inserted INT DEFAULT 0,
-                    total_updated INT DEFAULT 0,
-                    total_errors INT DEFAULT 0,
-                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    completed_at TIMESTAMP NULL,
-                    status VARCHAR(20) DEFAULT 'running',
-                    error_message TEXT
-                )
-            """
-            self.db.execute_query(schema)
-            logging.info("sync_logs table created successfully")
+            if self.db.connect():
+                try:
+                    if self.db.is_production:
+                        # MySQL schema for production
+                        schema = """
+                        CREATE TABLE IF NOT EXISTS sync_logs (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            sync_type VARCHAR(20) NOT NULL,
+                            total_fetched INT DEFAULT 0,
+                            total_inserted INT DEFAULT 0,
+                            total_updated INT DEFAULT 0,
+                            total_errors INT DEFAULT 0,
+                            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            completed_at TIMESTAMP NULL,
+                            status VARCHAR(20) DEFAULT 'running',
+                            error_message TEXT,
+                            INDEX idx_sync_type (sync_type),
+                            INDEX idx_started_at (started_at),
+                            INDEX idx_status (status)
+                        )
+                        """
+                    else:
+                        # SQLite schema for development
+                        schema = """
+                        CREATE TABLE IF NOT EXISTS sync_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            sync_type TEXT NOT NULL,
+                            total_fetched INTEGER DEFAULT 0,
+                            total_inserted INTEGER DEFAULT 0,
+                            total_updated INTEGER DEFAULT 0,
+                            total_errors INTEGER DEFAULT 0,
+                            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            completed_at TIMESTAMP NULL,
+                            status TEXT DEFAULT 'running',
+                            error_message TEXT
+                        )
+                        """
+                    
+                    self.db.execute_query(schema)
+                    
+                    # Create indexes separately for SQLite
+                    if not self.db.is_production:
+                        indexes = [
+                            "CREATE INDEX IF NOT EXISTS idx_sync_type ON sync_logs(sync_type)",
+                            "CREATE INDEX IF NOT EXISTS idx_started_at ON sync_logs(started_at)",
+                            "CREATE INDEX IF NOT EXISTS idx_status ON sync_logs(status)"
+                        ]
+                        
+                        for index_sql in indexes:
+                            try:
+                                self.db.execute_query(index_sql)
+                            except Exception as e:
+                                logging.warning(f"Index creation failed (may already exist): {e}")
+                    
+                    logging.info("sync_logs table created successfully")
+                finally:
+                    self.db.disconnect()
             
         except Exception as e:
             logging.error(f"Error creating sync_logs table: {e}")
@@ -285,37 +348,24 @@ class EnhancedDataPipeline:
         
         for api_product in api_products:
             try:
-                # Clean and validate product data before creating Product object
-                cleaned_product = {
-                    'product_code': self.safe_string_conversion(api_product.get('product_code')),
-                    'description': self.safe_string_conversion(api_product.get('description'), 'No Description'),
-                    'category': self.safe_string_conversion(api_product.get('category'), 'Uncategorized'),
-                    'brand': self.safe_string_conversion(api_product.get('brand'), 'Unknown'),
-                    'base_price': self.safe_float_conversion(api_product.get('base_price')),
-                    'current_price': self.safe_float_conversion(api_product.get('current_price')),
-                    'quantity_available': self.safe_int_conversion(api_product.get('quantity_available')),
-                    'branch_code': self.safe_string_conversion(api_product.get('branch_code'), 'MAIN'),
-                    'is_available': bool(api_product.get('is_available', False)),
-                    'part_numbers': api_product.get('part_numbers', []),
-                    'unit_of_measure': self.safe_string_conversion(api_product.get('unit_of_measure'), 'EACH')
-                }
+                # Use the Product model's from_api_response method
+                product = Product.from_api_response(api_product)
                 
                 # Skip products without product code
-                if not cleaned_product['product_code']:
+                if not product.product_code:
                     logging.warning("Skipping product without product_code")
                     errors += 1
                     continue
-                
-                # Transform to our model
-                product = Product.from_api_response(cleaned_product)
                 
                 # Calculate hash for change detection
                 current_hash = self.calculate_product_hash(product)
                 
                 # Check if product exists and if data changed
-                check_query = """
-                    SELECT id, data_hash FROM marketplace_products 
-                    WHERE product_code = %s
+                # Use appropriate placeholder based on database type
+                placeholder = "%s" if self.db.is_production else "?"
+                check_query = f"""
+                    SELECT id, data_hash FROM products 
+                    WHERE product_code = {placeholder}
                 """
                 existing = self.db.execute_query(check_query, (product.product_code,))
                 
@@ -326,37 +376,40 @@ class EnhancedDataPipeline:
                         continue
                     
                     # Update existing product
-                    update_query = """
-                        UPDATE marketplace_products SET
-                            description = %s, category = %s, brand = %s,
-                            base_price = %s, current_price = %s, quantity_available = %s,
-                            branch_code = %s, is_available = %s, part_numbers = %s,
-                            unit_of_measure = %s, data_hash = %s, last_sync = CURRENT_TIMESTAMP
-                        WHERE product_code = %s
+                    update_query = f"""
+                        UPDATE products SET
+                            description = {placeholder}, category = {placeholder}, brand = {placeholder},
+                            base_price = {placeholder}, current_price = {placeholder}, quantity_available = {placeholder},
+                            branch_code = {placeholder}, is_available = {placeholder}, part_numbers = {placeholder},
+                            unit_of_measure = {placeholder}, data_hash = {placeholder}, last_updated = {placeholder}
+                        WHERE product_code = {placeholder}
                     """
                     params = [
                         product.description, product.category, product.brand,
                         product.base_price, product.current_price, product.quantity_available,
                         product.branch_code, product.is_available, json.dumps(product.part_numbers),
-                        product.unit_of_measure, current_hash, product.product_code
+                        product.unit_of_measure, current_hash, datetime.now(),
+                        product.product_code
                     ]
                     self.db.execute_query(update_query, params)
                     updated += 1
                     
                 else:
                     # Insert new product
-                    insert_query = """
-                        INSERT INTO marketplace_products (
+                    insert_query = f"""
+                        INSERT INTO products (
                             product_code, description, category, brand, base_price,
                             current_price, quantity_available, branch_code, is_available,
-                            part_numbers, unit_of_measure, data_hash
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            part_numbers, unit_of_measure, data_hash, last_updated
+                        ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                                 {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                                 {placeholder}, {placeholder}, {placeholder})
                     """
                     params = [
                         product.product_code, product.description, product.category, product.brand,
                         product.base_price, product.current_price, product.quantity_available,
                         product.branch_code, product.is_available, json.dumps(product.part_numbers),
-                        product.unit_of_measure, current_hash
+                        product.unit_of_measure, current_hash, datetime.now()
                     ]
                     self.db.execute_query(insert_query, params)
                     inserted += 1
@@ -403,6 +456,7 @@ class EnhancedDataPipeline:
                 return products
             else:
                 logging.error(f"API returned status code: {response.status_code}")
+                logging.error(f"Response content: {response.text[:500]}")  # Log first 500 chars
                 return []
                 
         except requests.exceptions.Timeout:
@@ -446,22 +500,33 @@ class EnhancedDataPipeline:
             error_msg (str, optional): Error message if operation failed
         """
         try:
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            insert_query = """
-                INSERT INTO sync_logs (
-                    sync_type, total_fetched, total_inserted, total_updated, 
-                    total_errors, started_at, completed_at, status, error_message
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            self.db.execute_query(insert_query, [
-                sync_type, total_fetched, inserted, updated, errors,
-                start_time, end_time, status, error_msg
-            ])
-            
-            logging.info(f"Sync operation logged: {sync_type} - {status} - Duration: {duration:.2f}s")
-            
+            if not self.db.connect():
+                logging.error("Cannot log sync operation - database connection failed")
+                return
+                
+            try:
+                end_time = datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                
+                # Use appropriate placeholder based on database type
+                placeholder = "%s" if self.db.is_production else "?"
+                insert_query = f"""
+                    INSERT INTO sync_logs (
+                        sync_type, total_fetched, total_inserted, total_updated, 
+                        total_errors, started_at, completed_at, status, error_message
+                    ) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                             {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                """
+                self.db.execute_query(insert_query, [
+                    sync_type, total_fetched, inserted, updated, errors,
+                    start_time, end_time, status, error_msg
+                ])
+                
+                logging.info(f"Sync operation logged: {sync_type} - {status} - Duration: {duration:.2f}s")
+                
+            finally:
+                self.db.disconnect()
+                
         except Exception as e:
             logging.error(f"Error logging sync operation: {e}")
 
@@ -491,10 +556,6 @@ class EnhancedDataPipeline:
         start_time = datetime.now()
         logging.info("Starting full product synchronization")
         
-        if not self.db.connect():
-            logging.error("Database connection failed")
-            return False
-        
         try:
             # Create tables if needed (with proper error handling)
             self.create_optimized_products_table()
@@ -522,14 +583,24 @@ class EnhancedDataPipeline:
                 # Reset failure counter on successful fetch
                 consecutive_failures = 0
                 
-                inserted, updated, errors = self.process_and_sync_products(api_products)
+                # Connect to database for processing
+                if not self.db.connect():
+                    logging.error("Database connection failed during sync")
+                    self.log_sync_operation('full', total_fetched, total_inserted, total_updated, total_errors, start_time, 'failed', 'Database connection failed')
+                    return False
                 
-                total_fetched += len(api_products)
-                total_inserted += inserted
-                total_updated += updated
-                total_errors += errors
-                
-                logging.info(f"Page {page_no}: {len(api_products)} fetched, {inserted} inserted, {updated} updated, {errors} errors")
+                try:
+                    inserted, updated, errors = self.process_and_sync_products(api_products)
+                    
+                    total_fetched += len(api_products)
+                    total_inserted += inserted
+                    total_updated += updated
+                    total_errors += errors
+                    
+                    logging.info(f"Page {page_no}: {len(api_products)} fetched, {inserted} inserted, {updated} updated, {errors} errors")
+                    
+                finally:
+                    self.db.disconnect()
                 
                 # Stop if we got fewer products than requested (last page) or reached max pages
                 if len(api_products) < page_size or (max_pages and page_no >= max_pages):
@@ -551,8 +622,6 @@ class EnhancedDataPipeline:
             logging.error(f"Full sync failed: {e}")
             self.log_sync_operation('full', 0, 0, 0, 0, start_time, 'failed', str(e))
             return False
-        finally:
-            self.db.disconnect()
 
     def run_incremental_sync(self, hours_back=1):
         """
@@ -572,10 +641,6 @@ class EnhancedDataPipeline:
         start_time = datetime.now()
         logging.info(f"Starting incremental sync for last {hours_back} hours")
         
-        if not self.db.connect():
-            logging.error("Database connection failed")
-            return False
-        
         try:
             # Ensure tables exist
             self.create_optimized_products_table()
@@ -585,11 +650,20 @@ class EnhancedDataPipeline:
             api_products = self.fetch_products_from_api({'pagesize': 50, 'pageno': 1})
             
             if api_products:
-                inserted, updated, errors = self.process_and_sync_products(api_products)
-                self.log_sync_operation('incremental', len(api_products), inserted, updated, errors, start_time)
-                logging.info(f"Incremental sync: {len(api_products)} checked, {updated} updated, {inserted} new, {errors} errors")
+                if not self.db.connect():
+                    logging.error("Database connection failed during incremental sync")
+                    self.log_sync_operation('incremental', 0, 0, 0, 0, start_time, 'failed', 'Database connection failed')
+                    return False
+                
+                try:
+                    inserted, updated, errors = self.process_and_sync_products(api_products)
+                    self.log_sync_operation('incremental', len(api_products), inserted, updated, errors, start_time)
+                    logging.info(f"Incremental sync: {len(api_products)} checked, {updated} updated, {inserted} new, {errors} errors")
+                finally:
+                    self.db.disconnect()
             else:
                 logging.info("No products fetched for incremental sync")
+                self.log_sync_operation('incremental', 0, 0, 0, 0, start_time)
             
             return True
             
@@ -597,8 +671,6 @@ class EnhancedDataPipeline:
             logging.error(f"Incremental sync failed: {e}")
             self.log_sync_operation('incremental', 0, 0, 0, 0, start_time, 'failed', str(e))
             return False
-        finally:
-            self.db.disconnect()
 
     def get_marketplace_statistics(self):
         """
@@ -629,7 +701,7 @@ class EnhancedDataPipeline:
                     AVG(CASE WHEN is_available = 1 AND current_price > 0 THEN current_price END) as avg_price,
                     MIN(CASE WHEN is_available = 1 AND current_price > 0 THEN current_price END) as min_price,
                     MAX(CASE WHEN is_available = 1 AND current_price > 0 THEN current_price END) as max_price
-                FROM marketplace_products
+                FROM products
             """
             
             result = self.db.execute_query(stats_query)
@@ -641,7 +713,7 @@ class EnhancedDataPipeline:
             # Top categories
             categories_query = """
                 SELECT category, COUNT(*) as count 
-                FROM marketplace_products 
+                FROM products 
                 WHERE is_available = 1
                 GROUP BY category 
                 ORDER BY count DESC 
@@ -668,7 +740,7 @@ class EnhancedDataPipeline:
                     "max": float(stats[4]) if stats[4] else 0
                 },
                 "top_categories": [
-                    {"category": cat[0], "count": cat[1]} for cat in categories
+                    {"category": cat[0], "count": cat[1]} for cat in (categories or [])
                 ],
                 "recent_syncs": [
                     {
@@ -679,7 +751,7 @@ class EnhancedDataPipeline:
                         "errors": log[4],
                         "completed": log[5].isoformat() if log[5] else None,
                         "status": log[6]
-                    } for log in sync_logs
+                    } for log in (sync_logs or [])
                 ]
             }
             

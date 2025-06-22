@@ -1,223 +1,192 @@
-from flask import Flask, request, jsonify, send_from_directory
-import requests
-from requests.auth import HTTPBasicAuth
-from backend.app.pipeline.enhanced_pipeline import EnhancedDataPipeline
+"""
+Flask API Backend Application
+
+This module serves as the main entry point for the Flask-based API backend service.
+It provides a RESTful API interface for handling requests and communicating with
+external services using HTTP Basic Authentication.
+"""
+
 import os
+import sys
+import logging
+from flask import Flask
+from flask_migrate import Migrate
+from flask_cors import CORS
 from dotenv import load_dotenv
 import threading
 
-from backend.app.api.products import products_bp
 
+# Load environment variables from .env file
 load_dotenv()
 
-app = Flask(__name__)
+# Add the backend directory to Python path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Configuration
-USERNAME = os.getenv('API_USERNAME')
-PASSWORD = os.getenv('API_PASSWORD')
-BASE_URL = os.getenv('API_BASE_URL')
+# Import db from application package
+from application import db
+from application.config import DevelopmentConfig, ProductionConfig
 
-# Register the products blueprint
-app.register_blueprint(products_bp)
+# Initialize migrate
+migrate = Migrate()
 
-@app.route('/fetch/<resource>', methods=['GET'])
-def fetch_resource(resource):
-    """Fetch data from external API (original functionality)"""
-    url = f"{BASE_URL}/{resource}"
-    query_params = request.args.to_dict()
-
-    try:
-        response = requests.get(
-            url,
-            auth=HTTPBasicAuth(USERNAME, PASSWORD),
-            headers={"Accept": "application/json"},
-            params=query_params,
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            return jsonify(response.json()), 200
-        else:
-            return jsonify({
-                "error": f"HTTP {response.status_code}",
-                "message": response.reason
-            }), response.status_code
-
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": "Request failed", "message": str(e)}), 500
-
-@app.route('/marketplace/stats', methods=['GET'])
-def get_marketplace_stats():
-    """Get marketplace statistics"""
-    try:
-        pipeline = EnhancedDataPipeline()
-        stats = pipeline.get_marketplace_statistics()
-        
-        if stats:
-            return jsonify(stats), 200
-        else:
-            return jsonify({"error": "Could not retrieve statistics"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/pipeline/sync/full', methods=['POST'])
-def run_full_sync():
-    """Trigger full synchronization"""
-    try:
-        data = request.json or {}
-        page_size = data.get('page_size', 100)
-        max_pages = data.get('max_pages')
-        
-        # Run sync in background to avoid timeout
-        def run_sync():
-            pipeline = EnhancedDataPipeline()
-            pipeline.run_full_sync(page_size=page_size, max_pages=max_pages)
-        
-        # Start sync in background thread
-        threading.Thread(target=run_sync, daemon=True).start()
-        
-        return jsonify({"message": "Full sync started successfully"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/pipeline/sync/incremental', methods=['POST'])
-def run_incremental_sync():
-    """Trigger incremental synchronization"""
-    try:
-        data = request.json or {}
-        hours_back = data.get('hours_back', 1)
-        
-        # Run sync in background to avoid timeout
-        def run_sync():
-            pipeline = EnhancedDataPipeline()
-            pipeline.run_incremental_sync(hours_back=hours_back)
-        
-        # Start sync in background thread
-        threading.Thread(target=run_sync, daemon=True).start()
-        
-        return jsonify({"message": "Incremental sync started successfully"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/marketplace/products', methods=['GET'])
-def get_marketplace_products():
-    """Get products for marketplace with filtering"""
-    try:
-        from backend.app.utils.database import DatabaseConnection
-        
-        # Get query parameters
-        category = request.args.get('category')
-        brand = request.args.get('brand')
-        min_price = request.args.get('min_price', type=float)
-        max_price = request.args.get('max_price', type=float)
-        search = request.args.get('search')
-        available_only = request.args.get('available_only', 'true').lower() == 'true'
-        page = request.args.get('page', 1, type=int)
-        limit = request.args.get('limit', 20, type=int)
-        
-        db = DatabaseConnection()
-        if not db.connect():
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        # Build query
-        where_conditions = []
-        params = []
-        
-        if available_only:
-            where_conditions.append("is_available = TRUE")
-        
-        if category:
-            where_conditions.append("category = %s")
-            params.append(category)
-        
-        if brand:
-            where_conditions.append("brand = %s")
-            params.append(brand)
-        
-        if min_price is not None:
-            where_conditions.append("current_price >= %s")
-            params.append(min_price)
-        
-        if max_price is not None:
-            where_conditions.append("current_price <= %s")
-            params.append(max_price)
-        
-        if search:
-            where_conditions.append("(description LIKE %s OR brand LIKE %s)")
-            search_term = f"%{search}%"
-            params.extend([search_term, search_term])
-        
-        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-        
-        # Count total
-        count_query = f"SELECT COUNT(*) FROM marketplace_products WHERE {where_clause}"
-        total_result = db.execute_query(count_query, params)
-        total = total_result[0][0] if total_result else 0
-        
-        # Get products
-        offset = (page - 1) * limit
-        query = f"""
-            SELECT product_code, description, category, brand, current_price, 
-                   quantity_available, unit_of_measure, part_numbers
-            FROM marketplace_products 
-            WHERE {where_clause}
-            ORDER BY brand, description
-            LIMIT %s OFFSET %s
-        """
-        params.extend([limit, offset])
-        
-        products = db.execute_query(query, params)
-        
-        result = {
-            "products": [
-                {
-                    "product_code": row[0],
-                    "description": row[1],
-                    "category": row[2],
-                    "brand": row[3],
-                    "price": float(row[4]),
-                    "quantity_available": row[5],
-                    "unit_of_measure": row[6],
-                    "part_numbers": row[7] if row[7] else []
-                } for row in products
-            ],
-            "pagination": {
-                "current_page": page,
-                "total_pages": (total + limit - 1) // limit,
-                "total_items": total,
-                "items_per_page": limit
-            }
+def create_app(config_name=None):
+    """Create and configure Flask application"""
+    app = Flask(__name__)
+    
+    # Load configuration
+    if config_name is None:
+        config_name = os.getenv('FLASK_ENV', 'development')
+    
+    if config_name == 'production':
+        app.config.from_object(ProductionConfig)
+    else:
+        app.config.from_object(DevelopmentConfig)
+    
+    # Initialize extensions with app
+    db.init_app(app)
+    migrate.init_app(app, db)
+    
+    # Configure CORS properly
+    CORS(app, resources={
+        r"/*": {
+            "origins": "*",
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
         }
+    })
+    
+    # Configure logging
+    configure_logging(app)
+    
+    # Register blueprints
+    register_blueprints(app)
+    
+    # Register error handlers
+    register_error_handlers(app)
+    
+    # Create database tables within app context
+    with app.app_context():
+        # Import models to ensure they're registered with SQLAlchemy
+        from application.models import user, user_otp, user_session, product
         
-        db.disconnect()
-        return jsonify(result), 200
+        # Create tables if they don't exist
+        db.create_all()
         
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.info(f"Database initialized: {app.config['SQLALCHEMY_DATABASE_URI']}")
+    
+    return app
 
-@app.route('/dashboard')
-def dashboard():
-    """Serve the dashboard HTML file"""
-    return send_from_directory('static', 'dashboard.html')
+def configure_logging(app):
+    """Configure application logging"""
+    # Remove default Flask logger handlers
+    app.logger.handlers = []
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    
+    # Set log level based on environment
+    if app.config['DEBUG']:
+        app.logger.setLevel(logging.DEBUG)
+        console_handler.setLevel(logging.DEBUG)
+    else:
+        app.logger.setLevel(logging.INFO)
+        console_handler.setLevel(logging.INFO)
+    
+    app.logger.addHandler(console_handler)
+    
+    # Optionally add file handler for production
+    if not app.config['DEBUG']:
+        file_handler = logging.FileHandler('app.log')
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.ERROR)
+        app.logger.addHandler(file_handler)
 
-@app.route('/')
-def home():
-    return """
-    <h1>Autospares Marketplace API</h1>
-    <p><a href="/dashboard">🚗 Go to Dashboard</a></p>
-    <h2>Data Pipeline Endpoints:</h2>
-    <ul>
-        <li><strong>POST /pipeline/sync/full</strong> - Run full synchronization</li>
-        <li><strong>POST /pipeline/sync/incremental</strong> - Run incremental sync</li>
-        <li><strong>GET /marketplace/stats</strong> - Get marketplace statistics</li>
-        <li><strong>GET /marketplace/products</strong> - Get marketplace products with filtering</li>
-    </ul>
-    <h3>Product Search Parameters:</h3>
-    <ul>
-        <li>category, brand, min_price, max_price, search, available_only</li>
-        <li>page, limit (pagination)</li>
-    </ul>
-    """
+def register_blueprints(app):
+    """Register all application blueprints"""
+    # Import blueprints
+    from application.api.auth import auth_bp
+    from application.api.pipeline import pipeline_bp
+    from application.api.common import common_bp
+    from application.api.products import products_bp
+
+    
+    # Register blueprints with URL prefixes
+    app.register_blueprint(auth_bp, url_prefix='/auth')
+    app.register_blueprint(pipeline_bp, url_prefix='/pipeline')
+    app.register_blueprint(common_bp)  # Common routes like health, schema, etc.
+    app.register_blueprint(products_bp)
+    
+    app.logger.info("Blueprints registered successfully")
+
+def register_error_handlers(app):
+    """Register global error handlers"""
+    
+    @app.errorhandler(404)
+    def not_found_error(error):
+        return {"error": "Resource not found", "code": 404}, 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        db.session.rollback()
+        app.logger.error(f"Internal error: {error}")
+        return {"error": "Internal server error", "code": 500}, 500
+    
+    @app.errorhandler(Exception)
+    def unhandled_exception(error):
+        db.session.rollback()
+        app.logger.error(f"Unhandled exception: {error}", exc_info=True)
+        if app.config['DEBUG']:
+            return {"error": str(error), "code": 500}, 500
+        return {"error": "An unexpected error occurred", "code": 500}, 500
+
+# Create the app instance
+app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Test database connection on startup
+    from application.utils.database import DatabaseConnection
+    
+    print("\n" + "="*60)
+    print("🚀 AUTOSPARES MARKETPLACE API")
+    print("="*60)
+    
+    # Test database connection
+    try:
+        db_conn = DatabaseConnection()
+        db_test = db_conn.test_connection()
+        
+        if db_test.get('connected'):
+            print(f"✓ Database: {db_test.get('database')}")
+            print(f"✓ Type: {db_test.get('db_type')}")
+            print(f"✓ Version: {db_test.get('version')}")
+        else:
+            print(f"✗ Database connection failed: {db_test.get('error', 'Unknown error')}")
+    except Exception as e:
+        print(f"✗ Database test error: {e}")
+    
+    # Display server information
+    print("\n" + "-"*60)
+    print(f"Environment: {os.getenv('FLASK_ENV', 'development')}")
+    print(f"Debug Mode: {app.config['DEBUG']}")
+    print(f"Server URL: http://127.0.0.1:5000")
+    print("-"*60)
+    print("\nAvailable Endpoints:")
+    print("  • Health Check: http://127.0.0.1:5000/health")
+    print("  • API Info: http://127.0.0.1:5000/")
+    print("  • Schema Info: http://127.0.0.1:5000/schema")
+    print("  • Auth API: http://127.0.0.1:5000/auth/*")
+    print("  • Pipeline API: http://127.0.0.1:5000/pipeline/*")
+    print("="*60 + "\n")
+    
+    # Run the application
+    app.run(
+        host='127.0.0.1',
+        port=5000,
+        debug=app.config['DEBUG']
+    )
