@@ -39,24 +39,11 @@ def get_pending_users():
         - customer_id: Filter by customer
         - role: Filter by role (owner, staff, viewer)
         - created_after: ISO date string
+        - search: Search by name or email
     
     Response:
         {
-            "users": [
-                {
-                    "id": 1,
-                    "name": "John Doe",
-                    "email": "john@company.com",
-                    "role": "staff",
-                    "customer": {
-                        "id": 1,
-                        "name": "ABC Company",
-                        "code": "CUST001"
-                    },
-                    "created_at": "2025-06-20T10:00:00",
-                    "days_pending": 1
-                }
-            ],
+            "users": [...],
             "count": 1
         }
     """
@@ -69,8 +56,10 @@ def get_pending_users():
             filters['role'] = request.args.get('role')
         if request.args.get('created_after'):
             filters['created_after'] = request.args.get('created_after')
+        if request.args.get('search'):
+            filters['search'] = request.args.get('search')
         
-        pending_users = admin_service.get_pending_users(filter_by=filters)
+        pending_users = admin_service.get_users_by_status('pending', filter_by=filters)
         
         return jsonify({
             'users': pending_users,
@@ -81,6 +70,92 @@ def get_pending_users():
         logger.error(f"Error in get_pending_users: {str(e)}")
         return jsonify({
             'error': 'Failed to fetch pending users',
+            'code': 'FETCH_ERROR'
+        }), 500
+
+
+@admin_bp.route('/active-users', methods=['GET'])
+@token_required
+@platform_user_required
+def get_active_users():
+    """
+    Get all active (approved) customer users.
+    
+    Query Parameters:
+        - customer_id: Filter by customer
+        - role: Filter by role (owner, staff, viewer)
+        - search: Search by name or email
+    
+    Response:
+        {
+            "users": [...],
+            "count": 1
+        }
+    """
+    try:
+        # Parse filters from query params
+        filters = {}
+        if request.args.get('customer_id'):
+            filters['customer_id'] = int(request.args.get('customer_id'))
+        if request.args.get('role'):
+            filters['role'] = request.args.get('role')
+        if request.args.get('search'):
+            filters['search'] = request.args.get('search')
+        
+        active_users = admin_service.get_users_by_status('approved', filter_by=filters)
+        
+        return jsonify({
+            'users': active_users,
+            'count': len(active_users)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_active_users: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch active users',
+            'code': 'FETCH_ERROR'
+        }), 500
+
+
+@admin_bp.route('/rejected-users', methods=['GET'])
+@token_required
+@platform_user_required
+def get_rejected_users():
+    """
+    Get all rejected customer users.
+    
+    Query Parameters:
+        - customer_id: Filter by customer
+        - role: Filter by role (owner, staff, viewer)
+        - search: Search by name or email
+    
+    Response:
+        {
+            "users": [...],
+            "count": 1
+        }
+    """
+    try:
+        # Parse filters from query params
+        filters = {}
+        if request.args.get('customer_id'):
+            filters['customer_id'] = int(request.args.get('customer_id'))
+        if request.args.get('role'):
+            filters['role'] = request.args.get('role')
+        if request.args.get('search'):
+            filters['search'] = request.args.get('search')
+        
+        rejected_users = admin_service.get_users_by_status('rejected', filter_by=filters)
+        
+        return jsonify({
+            'users': rejected_users,
+            'count': len(rejected_users)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_rejected_users: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch rejected users',
             'code': 'FETCH_ERROR'
         }), 500
 
@@ -448,4 +523,46 @@ def get_system_stats():
         return jsonify({
             'error': 'Failed to fetch system statistics',
             'code': 'STATS_ERROR'
+        }), 500
+
+
+@admin_bp.route('/system/recent-activity', methods=['GET'])
+@token_required
+@platform_user_required
+def get_recent_activity():
+    """
+    Get recent admin activity for dashboard.
+    
+    Query Parameters:
+        - limit: Number of activities to return (default: 10, max: 50)
+    
+    Response:
+        {
+            "activities": [
+                {
+                    "id": "user_approved_123",
+                    "type": "user_approved",
+                    "message": "User john@company.com was approved",
+                    "timestamp": "2025-06-21T14:30:00",
+                    "user_email": "john@company.com",
+                    "customer_name": "ABC Company"
+                }
+            ],
+            "count": 1
+        }
+    """
+    try:
+        limit = min(int(request.args.get('limit', 10)), 50)  # Cap at 50
+        activities = admin_service.get_recent_activity(limit=limit)
+        
+        return jsonify({
+            'activities': activities,
+            'count': len(activities)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching recent activity: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch recent activity',
+            'code': 'ACTIVITY_ERROR'
         }), 500
