@@ -1,6 +1,6 @@
 ﻿blinker
 certifi
-charset-normalize
+charset-normalizer
 click
 colorama
 idna
