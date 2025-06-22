@@ -18,9 +18,9 @@ from flask import request, jsonify, g
 from datetime import datetime
 import logging
 
-from backend.application.models.user_session import UserSession
-from backend.application.models.customer_user import CustomerUser, CustomerUserStatus
-from backend.application.models.permission_code import PermissionCode
+from application.models import UserSession
+from application.models.customer_user import CustomerUser, CustomerUserStatus
+from application.models.permission_code import PermissionCode
 
 logger = logging.getLogger(__name__)
 

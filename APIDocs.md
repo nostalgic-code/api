@@ -86,6 +86,27 @@ Get all pending customer users.
   - `customer_id` (int, optional)
   - `role` (string, optional)
   - `created_after` (ISO date, optional)
+  - `search` (string, optional) - Search by name or email
+- **Response:**
+  - `users` (list)
+  - `count` (int)
+
+### GET `/api/admin/active-users`
+Get all active (approved) customer users.
+- **Query Params:**
+  - `customer_id` (int, optional)
+  - `role` (string, optional)
+  - `search` (string, optional) - Search by name or email
+- **Response:**
+  - `users` (list)
+  - `count` (int)
+
+### GET `/api/admin/rejected-users`
+Get all rejected customer users.
+- **Query Params:**
+  - `customer_id` (int, optional)
+  - `role` (string, optional)
+  - `search` (string, optional) - Search by name or email
 - **Response:**
   - `users` (list)
   - `count` (int)

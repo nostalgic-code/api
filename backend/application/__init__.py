@@ -28,8 +28,8 @@ def create_app(config_name=None):
     db.init_app(app)
     migrate.init_app(app, db)
     CORS(app, resources={
-        r"/*": {
-            "origins": "*",
+        r"/api/*": {
+            "origins": ["http://localhost:5000", "http://127.0.0.1:5000"],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"]
         }
@@ -49,11 +49,13 @@ def create_app(config_name=None):
     from application.api.pipeline import pipeline_bp
     from application.api.common import common_bp
     from application.api.admin import admin_bp
+    from application.api.frontend import frontend_bp
     
-    app.register_blueprint(auth_bp, url_prefix='/auth')
-    app.register_blueprint(pipeline_bp, url_prefix='/pipeline')
-    app.register_blueprint(common_bp)
-    app.register_blueprint(admin_bp, url_prefix='/api/admin')
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')  # Add /api prefix
+    app.register_blueprint(pipeline_bp, url_prefix='/api/pipeline')  # Add /api prefix
+    app.register_blueprint(common_bp, url_prefix='/api')  # Add /api prefix
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')  # Already has /api
+    app.register_blueprint(frontend_bp)
     
     return app
 

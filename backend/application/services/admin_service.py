@@ -38,18 +38,29 @@ class AdminService:
     
     # User Management Methods
     
-    def get_pending_users(self, filter_by: Optional[Dict] = None) -> List[Dict]:
+    def get_users_by_status(self, status: str, filter_by: Optional[Dict] = None) -> List[Dict]:
         """
-        Get all pending customer users awaiting approval.
+        Get users by status with optional filtering.
         
         Args:
-            filter_by: Optional filters (customer_id, role, date_range)
+            status: User status (pending, approved, rejected)
+            filter_by: Optional filters (customer_id, role, search, date_range)
             
         Returns:
-            List of pending users with customer information
+            List of users with customer information
         """
         try:
-            query = CustomerUser.query.filter_by(status=CustomerUserStatus.PENDING)
+            # Map status string to enum
+            if status == 'pending':
+                status_enum = CustomerUserStatus.PENDING
+            elif status == 'approved':
+                status_enum = CustomerUserStatus.APPROVED
+            elif status == 'rejected':
+                status_enum = CustomerUserStatus.REJECTED
+            else:
+                raise ValueError(f"Invalid status: {status}")
+            
+            query = CustomerUser.query.filter_by(status=status_enum)
             
             # Apply optional filters
             if filter_by:
@@ -59,17 +70,26 @@ class AdminService:
                     query = query.filter_by(role=CustomerUserRole[filter_by['role'].upper()])
                 if filter_by.get('created_after'):
                     query = query.filter(CustomerUser.created_at >= filter_by['created_after'])
+                if filter_by.get('search'):
+                    search = f"%{filter_by['search']}%"
+                    query = query.filter(
+                        or_(
+                            CustomerUser.name.ilike(search),
+                            CustomerUser.email.ilike(search)
+                        )
+                    )
             
-            pending_users = query.order_by(CustomerUser.created_at.desc()).all()
+            users = query.order_by(CustomerUser.created_at.desc()).all()
             
             result = []
-            for user in pending_users:
+            for user in users:
                 result.append({
                     'id': user.id,
                     'name': user.name,
                     'email': user.email,
                     'phone': user.phone,
                     'role': user.role.value,
+                    'status': user.status.value,
                     'customer': {
                         'id': user.customer.id,
                         'name': user.customer.name,
@@ -77,14 +97,18 @@ class AdminService:
                         'status': user.customer.status.value
                     },
                     'created_at': user.created_at.isoformat() if user.created_at else None,
-                    'days_pending': (datetime.utcnow() - user.created_at).days if user.created_at else 0
+                    'updated_at': user.updated_at.isoformat() if user.updated_at else None,
+                    'last_login': user.last_login.isoformat() if user.last_login else None,
+                    'days_pending': (datetime.utcnow() - user.created_at).days if user.created_at and status == 'pending' else None,
+                    'depot_access': user.depot_access,
+                    'permissions': user.permissions
                 })
             
-            self.logger.info(f"Found {len(result)} pending users")
+            self.logger.info(f"Found {len(result)} {status} users")
             return result
             
         except Exception as e:
-            self.logger.error(f"Error fetching pending users: {str(e)}")
+            self.logger.error(f"Error fetching {status} users: {str(e)}")
             raise
     
     def approve_user(self, user_id: int, approved_by: int, 
@@ -466,6 +490,78 @@ class AdminService:
     
     # System Information Methods
     
+    def get_recent_activity(self, limit: int = 10) -> List[Dict]:
+        """
+        Get recent admin activity for dashboard.
+        
+        Args:
+            limit: Number of recent activities to return
+            
+        Returns:
+            List of recent admin activities
+        """
+        try:
+            # For now, we'll get recent user approvals/rejections and customer status changes
+            # This is a simplified version - in production you'd have a dedicated audit log table
+            
+            activities = []
+            
+            # Get recently approved users
+            recent_approved = CustomerUser.query.filter_by(
+                status=CustomerUserStatus.APPROVED
+            ).order_by(CustomerUser.updated_at.desc()).limit(5).all()
+            
+            for user in recent_approved:
+                if user.updated_at:
+                    activities.append({
+                        'id': f"user_approved_{user.id}",
+                        'type': 'user_approved',
+                        'message': f"User {user.email} was approved",
+                        'timestamp': user.updated_at.isoformat(),
+                        'user_email': user.email,
+                        'customer_name': user.customer.name if user.customer else None
+                    })
+            
+            # Get recently rejected users
+            recent_rejected = CustomerUser.query.filter_by(
+                status=CustomerUserStatus.REJECTED
+            ).order_by(CustomerUser.updated_at.desc()).limit(5).all()
+            
+            for user in recent_rejected:
+                if user.updated_at:
+                    activities.append({
+                        'id': f"user_rejected_{user.id}",
+                        'type': 'user_rejected',
+                        'message': f"User {user.email} was rejected",
+                        'timestamp': user.updated_at.isoformat(),
+                        'user_email': user.email,
+                        'customer_name': user.customer.name if user.customer else None
+                    })
+            
+            # Get recently updated customers
+            recent_customers = Customer.query.order_by(
+                Customer.updated_at.desc()
+            ).limit(3).all()
+            
+            for customer in recent_customers:
+                if customer.updated_at and customer.updated_at != customer.created_at:
+                    activities.append({
+                        'id': f"customer_updated_{customer.id}",
+                        'type': 'customer_updated',
+                        'message': f"Customer {customer.name} status was updated",
+                        'timestamp': customer.updated_at.isoformat(),
+                        'customer_name': customer.name,
+                        'customer_status': customer.status.value
+                    })
+            
+            # Sort by timestamp and limit
+            activities.sort(key=lambda x: x['timestamp'], reverse=True)
+            return activities[:limit]
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching recent activity: {str(e)}")
+            return []
+    
     def get_system_stats(self) -> Dict:
         """
         Get system-wide statistics for dashboard.
@@ -494,8 +590,8 @@ class AdminService:
                     }
                 },
                 'depots': {
-                    'total': Depot.query.count(),
-                    'active': Depot.query.filter_by(active=True).count()
+                    'total': Depot.query.count()
+                    # Removed the 'active' filter since the field doesn't exist
                 },
                 'permission_codes': {
                     'total': PermissionCode.query.count()
