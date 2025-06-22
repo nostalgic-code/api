@@ -28,14 +28,22 @@ class SMSService:
     def __init__(self):
         """Initialize SMS service with BulkSMS configuration."""
         self.api_url = "https://api.bulksms.com/v1/messages"
-        
-        # Get credentials from environment
-        self.token_id = os.getenv('TOKEN_ID', '')
-        self.token_secret = os.getenv('TOKEN_SECRET', '')
-        
+
+        # Decode and extract credentials from environment
+        encoded_creds = os.getenv("BULK_SMS")
+        if not encoded_creds:
+            raise ValueError("BULK_SMS environment variable not set")
+    
+        try:
+            decoded = base64.b64decode(encoded_creds).decode("utf-8")
+            self.token_id, self.token_secret = decoded.split(":", 1)
+        except Exception as e:
+            raise ValueError("Invalid BULK_SMS credentials format") from e
+
         # Setup logging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
+
     
     def send_otp(self, phone: str, otp: str) -> bool:
         """
