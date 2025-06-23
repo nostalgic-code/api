@@ -1,0 +1,44 @@
+# Test Requirements for Products API and Service
+# Install with: pip install -r test_requirements.txt
+
+# Core testing framework
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+pytest-xdist>=3.0.0  # For parallel test execution
+
+# Flask testing utilities
+pytest-flask>=1.2.0
+
+# Mock and testing utilities
+mock>=4.0.0
+responses>=0.23.0  # For HTTP mocking
+factory-boy>=3.2.0  # For test data generation
+
+# Database testing
+pytest-postgresql>=4.1.0  # For PostgreSQL testing
+sqlalchemy-utils>=0.40.0  # Database utilities
+
+# Performance testing
+pytest-benchmark>=4.0.0
+memory-profiler>=0.60.0
+
+# Code quality and coverage
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.0.0
+
+# Documentation testing
+pytest-doctestplus>=0.12.0
+
+# Async testing (if needed)
+pytest-asyncio>=0.21.0
+
+# Reporting
+pytest-html>=3.1.0  # HTML test reports
+pytest-json-report>=1.5.0  # JSON test reports
+
+# Development utilities
+ipdb>=0.13.0  # Debugging
+freezegun>=1.2.0  # Time mocking
