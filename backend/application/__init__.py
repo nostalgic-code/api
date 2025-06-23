@@ -29,7 +29,7 @@ def create_app(config_name=None):
     migrate.init_app(app, db)
     CORS(app, resources={
         r"/api/*": {
-            "origins": ["http://localhost:5000", "http://127.0.0.1:5000", "zezwebox.co.za"],
+            "origins": ["http://localhost:5000", "http://127.0.0.1:5000", "https://zezwebox.co.za", "https://www.zezwebox.co.za", "zezwebox.co.za"],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"]
         }
