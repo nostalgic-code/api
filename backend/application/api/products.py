@@ -121,3 +121,18 @@ def get_brands():
         return jsonify({"brands": brands}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@products_bp.route('/autocomplete', methods=['GET'])
+def autocomplete():
+    """
+    Autocomplete product search suggestions.
+    Query param: q (partial search string)
+    """
+    try:
+        query = request.args.get('q') or request.args.get('query') or request.args.get('search')
+        if not query or len(query) < 2:
+            return jsonify({"suggestions": []}), 200
+        suggestions = service.search_index.get_suggestions(query)
+        return jsonify({"suggestions": suggestions}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

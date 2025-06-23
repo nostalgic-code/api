@@ -74,7 +74,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import logging
 import re
 from decimal import Decimal, InvalidOperation
-
+import ProductSearchIndex
 
 class ProductService:
     """
@@ -87,6 +87,8 @@ class ProductService:
     def __init__(self):
         """Initialize the ProductService"""
         self.logger = logging.getLogger(__name__)
+        self.search_index = ProductSearchIndex()
+        self._initialize_search_index()
     
     def _get_db_connection(self):
         """Get database connection with error handling"""
@@ -99,6 +101,28 @@ class ProductService:
         except ImportError:
             raise Exception("Database utilities not available")
     
+    def _initialize_search_index(self):
+        """Initialize the search index with all products"""
+        try:
+            db = self._get_db_connection()
+            
+            query = """
+                SELECT product_code, description, category, brand, current_price, 
+                       quantity_available, unit_of_measure, part_numbers, is_available
+                FROM products
+            """
+            
+            results = db.execute_query(query)
+            products = [self._format_product(row) for row in results]
+            
+            self.search_index.build_index(products)
+            
+            db.disconnect()
+            self.logger.info(f"Search index initialized with {len(products)} products")
+            
+        except Exception as e:
+            self.logger.error(f"Error initializing search index: {str(e)}")
+
     def _format_product(self, row: Tuple) -> Dict[str, Any]:
         """Format database row into product dictionary"""
         return {
@@ -254,21 +278,29 @@ class ProductService:
             if not query or not query.strip():
                 raise ValueError("Search query is required")
             
+            # Use inverted index for initial search
+            matching_codes = self.search_index.search(query.strip())
+
+            if not matching_codes:
+                return {
+                    "products": [],
+                    "count": 0,
+                    "query": query,
+                    "filters_applied": filters or {}
+                }
+            
             db = self._get_db_connection()
+
+
+
+
+
+
+
+            # Build filter conditions
+            where_conditions = [f"product_code IN ({', '.join(['%s'] * len(matching_codes))})"]
+            params = matching_codes.copy()
             
-            # Build search conditions
-            where_conditions = []
-            params = []
-            
-            # Main search condition
-            search_term = f"%{query.strip()}%"
-            where_conditions.append("""
-                (description LIKE %s OR brand LIKE %s OR product_code LIKE %s 
-                 OR category LIKE %s OR part_numbers LIKE %s)
-            """)
-            params.extend([search_term] * 5)
-            
-            # Apply additional filters
             if filters:
                 if filters.get("available_only", True):
                     where_conditions.append("is_available = TRUE")
@@ -291,29 +323,29 @@ class ProductService:
             
             where_clause = " AND ".join(where_conditions)
             
-            # Execute search
-            search_query = f"""
+            # Get filtered products
+            query = f"""
                 SELECT product_code, description, category, brand, current_price, 
                        quantity_available, unit_of_measure, part_numbers, is_available
                 FROM products 
                 WHERE {where_clause}
-                ORDER BY 
-                    CASE WHEN product_code LIKE %s THEN 1 ELSE 2 END,
-                    CASE WHEN description LIKE %s THEN 1 ELSE 2 END,
-                    brand, description
-                LIMIT 10
             """
-            # Add relevance sorting parameters
-            params.extend([f"%{query.strip()}%", f"%{query.strip()}%"])
             
-            results = db.execute_query(search_query, params)
-            
+            results = db.execute_query(query, params)
             products = [self._format_product(row) for row in results]
+            
+            # Maintain the order from the search index (relevance order)
+            ordered_products = []
+            product_map = {p["product_code"]: p for p in products}
+            
+            for code in matching_codes:
+                if code in product_map:
+                    ordered_products.append(product_map[code])
             
             db.disconnect()
             return {
-                "products": products,
-                "count": len(products),
+                "products": ordered_products,
+                "count": len(ordered_products),
                 "query": query,
                 "filters_applied": filters or {}
             }
@@ -321,6 +353,86 @@ class ProductService:
         except Exception as e:
             self.logger.error(f"Error searching products: {str(e)}")
             raise
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            
+        #     # Build search conditions
+        #     where_conditions = []
+        #     params = []
+            
+        #     # Main search condition
+        #     search_term = f"%{query.strip()}%"
+        #     where_conditions.append("""
+        #         (description LIKE %s OR brand LIKE %s OR product_code LIKE %s 
+        #          OR category LIKE %s OR part_numbers LIKE %s)
+        #     """)
+        #     params.extend([search_term] * 5)
+            
+        #     # Apply additional filters
+        #     if filters:
+        #         if filters.get("available_only", True):
+        #             where_conditions.append("is_available = TRUE")
+                
+        #         if filters.get("category"):
+        #             where_conditions.append("category = %s")
+        #             params.append(filters["category"])
+                
+        #         if filters.get("brand"):
+        #             where_conditions.append("brand = %s")
+        #             params.append(filters["brand"])
+                
+        #         if filters.get("min_price") is not None:
+        #             where_conditions.append("current_price >= %s")
+        #             params.append(filters["min_price"])
+                
+        #         if filters.get("max_price") is not None:
+        #             where_conditions.append("current_price <= %s")
+        #             params.append(filters["max_price"])
+            
+        #     where_clause = " AND ".join(where_conditions)
+            
+        #     # Execute search
+        #     search_query = f"""
+        #         SELECT product_code, description, category, brand, current_price, 
+        #                quantity_available, unit_of_measure, part_numbers, is_available
+        #         FROM products 
+        #         WHERE {where_clause}
+        #         ORDER BY 
+        #             CASE WHEN product_code LIKE %s THEN 1 ELSE 2 END,
+        #             CASE WHEN description LIKE %s THEN 1 ELSE 2 END,
+        #             brand, description
+        #         LIMIT 10
+        #     """
+        #     # Add relevance sorting parameters
+        #     params.extend([f"%{query.strip()}%", f"%{query.strip()}%"])
+            
+        #     results = db.execute_query(search_query, params)
+            
+        #     products = [self._format_product(row) for row in results]
+            
+        #     db.disconnect()
+        #     return {
+        #         "products": products,
+        #         "count": len(products),
+        #         "query": query,
+        #         "filters_applied": filters or {}
+        #     }
+            
+        # except Exception as e:
+        #     self.logger.error(f"Error searching products: {str(e)}")
+        #     raise
 
     def search_products_by_codes():
         """Search products by multiple product codes or partial product code match (Flask endpoint function)"""
@@ -648,3 +760,20 @@ class ProductService:
             self.logger.error(f"Error getting brands: {str(e)}")
             raise
 
+
+    # NotImplemented
+    # def _format_product(self, row) -> Dict:
+    #     """Format database row into product dictionary"""
+    #     # Implementation depends on your database structure
+    #     # This is a placeholder
+    #     return {
+    #         'product_code': row[0],
+    #         'description': row[1],
+    #         'category': row[2],
+    #         'brand': row[3],
+    #         'current_price': row[4],
+    #         'quantity_available': row[5],
+    #         'unit_of_measure': row[6],
+    #         'part_numbers': row[7],
+    #         'is_available': row[8]
+    #     }
