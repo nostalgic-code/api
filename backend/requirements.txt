@@ -1,8 +1,9 @@
 ﻿blinker
 certifi
-charset-normalize
+charset-normalizer
 click
 colorama
+config
 idna
 itsdangerous
 Jinja2
