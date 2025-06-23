@@ -7,6 +7,7 @@ This module contains configuration classes for different environments.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from urllib.parse import quote_plus  # Add this import
 
 # Load environment variables
 load_dotenv()
@@ -69,10 +70,18 @@ class ProductionConfig(Config):
     MYSQL_PORT = int(os.getenv('DB_PORT', 3306))
     MYSQL_DB = os.getenv('DB_NAME', 'autospares_marketplace')
     
+    # URL-encode the password to handle special characters
+    encoded_password = quote_plus('0okkx8Lg@$~.')
+    
     SQLALCHEMY_DATABASE_URI = (
-        f'mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@'
-        f'{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}?charset=utf8mb4'
+        f"mysql+pymysql://zezwebox_zezwe:{encoded_password}@zezwebox.co.za:3306/zezwebox_mvp_db?charset=utf8mb4"
     )
+    
+    # Or better yet, use environment variables:
+    # encoded_password = quote_plus(os.getenv('DB_PASSWORD', ''))
+    # SQLALCHEMY_DATABASE_URI = (
+    #     f"mysql+pymysql://{MYSQL_USER}:{encoded_password}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}?charset=utf8mb4"
+    # )
     
     # Production-specific settings
     SQLALCHEMY_POOL_SIZE = 10
