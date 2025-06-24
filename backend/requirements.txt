@@ -3,12 +3,6 @@ certifi
 charset-normalizer
 click
 colorama
-config
-idna
-itsdangerous
-Jinja2
-MarkupSafe
-requests
 urllib3
 Werkzeug
 Flask
@@ -22,5 +16,4 @@ mysql-connector-python
 python-dotenv
 schedule
 flask-cors
-
-
+Flask
