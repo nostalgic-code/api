@@ -605,53 +605,5 @@ class AdminService:
             raise
 
 
-from werkzeug.security import generate_password_hash
-from application.models import db, Customer, CustomerUser
-
-class AdminService:
-
-    def create_customer_user(self, name, email, phone, password, customer_code, role, permission_code, permissions, depot_access):
-        customer = Customer.query.filter_by(customer_code=customer_code).first()
-        if not customer:
-            return {
-                "success": False,
-                "error": "Customer not found",
-                "code": "CUSTOMER_NOT_FOUND"
-            }
-
-        existing_user = CustomerUser.query.filter_by(email=email).first()
-        if existing_user:
-            return {
-                "success": False,
-                "error": "Email already in use",
-                "code": "DUPLICATE_EMAIL"
-            }
-
-        new_user = CustomerUser(
-            name=name,
-            email=email,
-            phone=phone,
-            password=generate_password_hash(password),
-            customer_id=customer.id,
-            role=role,
-            permission_code=permission_code,
-            permissions=permissions,
-            depot_access=depot_access,
-            status='pending'
-        )
-
-        db.session.add(new_user)
-        db.session.commit()
-
-        return {
-            "success": True,
-            "user": {
-                "id": new_user.id,
-                "email": new_user.email,
-                "status": new_user.status
-            }
-        }
-
-
 # Create singleton instance
 admin_service = AdminService()
