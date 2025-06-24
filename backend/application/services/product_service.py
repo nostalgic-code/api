@@ -22,59 +22,20 @@ Dependencies:
 
 Usage:
     service = ProductService()
-    products = service.get_products_by_category('electronics')
+    products = service.get_products(filters={'category': 'electronics'})
 
 Author: Development Team
-Version: 1.0
+Version: 2.0
 """
 
-# TODO: Implement ProductService class with methods for:
-# - get_products(filters=None, pagination=None)
-# - get_product_by_code(product_code)
-# - search_products(query, filters=None)
-# - get_products_by_category(category)
-# - get_products_by_brand(brand)
-# - get_product_statistics()
-# - validate_product_data(product_data)
-
-
-
-"""
-Product Service Module
-
-This module provides business logic and data access layer for product operations.
-It handles product CRUD operations, search functionality, and business rules
-for the marketplace application.
-
-Key Features:
-- Product data retrieval and management
-- Search and filtering capabilities
-- Business logic for product operations
-- Data validation and transformation
-- Integration with database layer
-
-Classes:
-    ProductService: Main service class for product operations
-
-Dependencies:
-    - Database connection utilities
-    - Product model classes
-    - Validation utilities
-
-Usage:
-    service = ProductService()
-    products = service.get_products_by_category('electronics')
-
-Author: Development Team
-Version: 1.0
-"""
-
-from flask import jsonify
 from typing import Dict, List, Optional, Any, Tuple
 import logging
 import re
 from decimal import Decimal, InvalidOperation
-import ProductSearchIndex
+from datetime import datetime
+
+from application.services.product_search_index import ProductSearchIndex
+
 
 class ProductService:
     """
@@ -93,7 +54,7 @@ class ProductService:
     def _get_db_connection(self):
         """Get database connection with error handling"""
         try:
-            from backend.application.utils.database import DatabaseConnection
+            from application.utils.database import DatabaseConnection
             db = DatabaseConnection()
             if not db.connect():
                 raise Exception("Database connection failed")
@@ -114,7 +75,6 @@ class ProductService:
             
             results = db.execute_query(query)
             products = [self._format_product(row) for row in results]
-            
             self.search_index.build_index(products)
             
             db.disconnect()
@@ -141,8 +101,22 @@ class ProductService:
         """
         Get products with optional filters and pagination
         
+        This is the main method for retrieving products. It supports:
+        - Pagination
+        - Filtering by category, brand, price range, availability
+        - Simple text search (for non-indexed search)
+        - Sorting options
+        
         Args:
             filters: Dictionary of filter criteria
+                - category: str
+                - brand: str
+                - min_price: float
+                - max_price: float
+                - available_only: bool (default True)
+                - search: str (simple text search)
+                - product_codes: List[str] (specific product codes)
+                - sort_by: str (price_asc, price_desc, name_asc, name_desc)
             pagination: Dictionary with page, limit parameters
             
         Returns:
@@ -155,15 +129,15 @@ class ProductService:
             if pagination is None:
                 pagination = {"page": 1, "limit": 20}
             
-            page = pagination.get("page", 1)
-            limit = pagination.get("limit", 20)
+            page = max(1, pagination.get("page", 1))
+            limit = min(100, pagination.get("limit", 20))  # Cap at 100 for performance
             
             # Build query conditions
             where_conditions = []
             params = []
             
             if filters:
-                if filters.get("available_only", True):
+                if filters.get("available_only", False):
                     where_conditions.append("is_available = TRUE")
                 
                 if filters.get("category"):
@@ -182,12 +156,34 @@ class ProductService:
                     where_conditions.append("current_price <= %s")
                     params.append(filters["max_price"])
                 
+                # Handle specific product codes
+                if filters.get("product_codes"):
+                    codes = filters["product_codes"]
+                    if isinstance(codes, str):
+                        codes = [codes]
+                    placeholders = ', '.join(['%s'] * len(codes))
+                    where_conditions.append(f"product_code IN ({placeholders})")
+                    params.extend(codes)
+                
+                # Simple text search (fallback when not using search endpoint)
                 if filters.get("search"):
                     where_conditions.append("(description LIKE %s OR brand LIKE %s OR product_code LIKE %s)")
                     search_term = f"%{filters['search']}%"
                     params.extend([search_term, search_term, search_term])
             
             where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+            
+            # Determine sort order
+            sort_clause = "ORDER BY brand, description"  # Default
+            if filters and filters.get("sort_by"):
+                sort_map = {
+                    "price_asc": "current_price ASC",
+                    "price_desc": "current_price DESC",
+                    "name_asc": "description ASC",
+                    "name_desc": "description DESC",
+                    "newest": "created_at DESC",  # If you have created_at column
+                }
+                sort_clause = f"ORDER BY {sort_map.get(filters['sort_by'], 'brand, description')}"
             
             # Count total
             count_query = f"SELECT COUNT(*) FROM products WHERE {where_clause}"
@@ -201,7 +197,7 @@ class ProductService:
                        quantity_available, unit_of_measure, part_numbers, is_available
                 FROM products 
                 WHERE {where_clause}
-                ORDER BY brand, description
+                {sort_clause}
                 LIMIT %s OFFSET %s
             """
             params.extend([limit, offset])
@@ -214,7 +210,9 @@ class ProductService:
                     "current_page": page,
                     "total_pages": (total + limit - 1) // limit,
                     "total_items": total,
-                    "items_per_page": limit
+                    "items_per_page": limit,
+                    "has_next": page < (total + limit - 1) // limit,
+                    "has_previous": page > 1
                 },
                 "filters_applied": filters or {}
             }
@@ -224,6 +222,70 @@ class ProductService:
             
         except Exception as e:
             self.logger.error(f"Error getting products: {str(e)}")
+            raise
+    
+    def search_products(self, query: str, filters: Optional[Dict] = None, pagination: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Search products using the inverted index for fast, relevant results
+        
+        Args:
+            query: Search query string
+            filters: Additional filter criteria (same as get_products)
+            pagination: Dictionary with page, limit parameters
+            
+        Returns:
+            Dictionary containing matching products ordered by relevance
+        """
+        try:
+            if not query or not query.strip():
+                # If no query, fall back to regular product listing
+                return self.get_products(filters, pagination)
+            
+            # Use inverted index for initial search
+            matching_codes = self.search_index.search(query.strip(), max_results=500)
+
+            if not matching_codes:
+                return {
+                    "products": [],
+                    "pagination": {
+                        "current_page": 1,
+                        "total_pages": 0,
+                        "total_items": 0,
+                        "items_per_page": pagination.get("limit", 20) if pagination else 20,
+                        "has_next": False,
+                        "has_previous": False
+                    },
+                    "query": query,
+                    "filters_applied": filters or {}
+                }
+            
+            # Apply filters with the matching codes
+            if not filters:
+                filters = {}
+            filters["product_codes"] = matching_codes
+            
+            # Get filtered products
+            result = self.get_products(filters, pagination)
+            
+            # Maintain relevance order from search index
+            if result["products"]:
+                product_map = {p["product_code"]: p for p in result["products"]}
+                ordered_products = []
+                
+                for code in matching_codes:
+                    if code in product_map:
+                        ordered_products.append(product_map[code])
+                
+                result["products"] = ordered_products[:len(result["products"])]
+            
+            # Add search-specific metadata
+            result["query"] = query
+            result["search_suggestions"] = self.search_index.get_suggestions(query, max_suggestions=5)
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error searching products: {str(e)}")
             raise
     
     def get_product_by_code(self, product_code: str) -> Optional[Dict[str, Any]]:
@@ -240,319 +302,54 @@ class ProductService:
             if not product_code or not product_code.strip():
                 raise ValueError("Product code is required")
             
-            db = self._get_db_connection()
+            result = self.get_products(filters={"product_codes": [product_code.strip()]})
             
-            query = """
-                SELECT product_code, description, category, brand, current_price, 
-                       quantity_available, unit_of_measure, part_numbers, is_available
-                FROM products 
-                WHERE product_code = %s
-            """
+            if result["products"]:
+                return result["products"][0]
             
-            result = db.execute_query(query, [product_code.strip()])
-            
-            if not result:
-                db.disconnect()
-                return None
-            
-            product = self._format_product(result[0])
-            db.disconnect()
-            return product
+            return None
             
         except Exception as e:
             self.logger.error(f"Error getting product by code {product_code}: {str(e)}")
             raise
     
-    def search_products(self, query: str, filters: Optional[Dict] = None) -> Dict[str, Any]:
+    def get_related_products(self, product_code: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Search products by query string
+        Get related/alternative products for cross-selling
         
         Args:
-            query: Search query string
-            filters: Additional filter criteria
+            product_code: Base product code
+            limit: Maximum number of related products
             
         Returns:
-            Dictionary containing matching products
+            List of related products
         """
         try:
-            if not query or not query.strip():
-                raise ValueError("Search query is required")
+            # Get the base product
+            base_product = self.get_product_by_code(product_code)
+            if not base_product:
+                return []
             
-            # Use inverted index for initial search
-            matching_codes = self.search_index.search(query.strip())
-
-            if not matching_codes:
-                return {
-                    "products": [],
-                    "count": 0,
-                    "query": query,
-                    "filters_applied": filters or {}
-                }
-            
-            db = self._get_db_connection()
-
-
-
-
-
-
-
-            # Build filter conditions
-            where_conditions = [f"product_code IN ({', '.join(['%s'] * len(matching_codes))})"]
-            params = matching_codes.copy()
-            
-            if filters:
-                if filters.get("available_only", True):
-                    where_conditions.append("is_available = TRUE")
-                
-                if filters.get("category"):
-                    where_conditions.append("category = %s")
-                    params.append(filters["category"])
-                
-                if filters.get("brand"):
-                    where_conditions.append("brand = %s")
-                    params.append(filters["brand"])
-                
-                if filters.get("min_price") is not None:
-                    where_conditions.append("current_price >= %s")
-                    params.append(filters["min_price"])
-                
-                if filters.get("max_price") is not None:
-                    where_conditions.append("current_price <= %s")
-                    params.append(filters["max_price"])
-            
-            where_clause = " AND ".join(where_conditions)
-            
-            # Get filtered products
-            query = f"""
-                SELECT product_code, description, category, brand, current_price, 
-                       quantity_available, unit_of_measure, part_numbers, is_available
-                FROM products 
-                WHERE {where_clause}
-            """
-            
-            results = db.execute_query(query, params)
-            products = [self._format_product(row) for row in results]
-            
-            # Maintain the order from the search index (relevance order)
-            ordered_products = []
-            product_map = {p["product_code"]: p for p in products}
-            
-            for code in matching_codes:
-                if code in product_map:
-                    ordered_products.append(product_map[code])
-            
-            db.disconnect()
-            return {
-                "products": ordered_products,
-                "count": len(ordered_products),
-                "query": query,
-                "filters_applied": filters or {}
+            # Find products in same category and brand
+            filters = {
+                "category": base_product["category"],
+                "available_only": True
             }
             
-        except Exception as e:
-            self.logger.error(f"Error searching products: {str(e)}")
-            raise
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            result = self.get_products(filters, {"limit": limit + 1})
             
-        #     # Build search conditions
-        #     where_conditions = []
-        #     params = []
+            # Remove the base product and return
+            related = [p for p in result["products"] if p["product_code"] != product_code]
             
-        #     # Main search condition
-        #     search_term = f"%{query.strip()}%"
-        #     where_conditions.append("""
-        #         (description LIKE %s OR brand LIKE %s OR product_code LIKE %s 
-        #          OR category LIKE %s OR part_numbers LIKE %s)
-        #     """)
-        #     params.extend([search_term] * 5)
-            
-        #     # Apply additional filters
-        #     if filters:
-        #         if filters.get("available_only", True):
-        #             where_conditions.append("is_available = TRUE")
-                
-        #         if filters.get("category"):
-        #             where_conditions.append("category = %s")
-        #             params.append(filters["category"])
-                
-        #         if filters.get("brand"):
-        #             where_conditions.append("brand = %s")
-        #             params.append(filters["brand"])
-                
-        #         if filters.get("min_price") is not None:
-        #             where_conditions.append("current_price >= %s")
-        #             params.append(filters["min_price"])
-                
-        #         if filters.get("max_price") is not None:
-        #             where_conditions.append("current_price <= %s")
-        #             params.append(filters["max_price"])
-            
-        #     where_clause = " AND ".join(where_conditions)
-            
-        #     # Execute search
-        #     search_query = f"""
-        #         SELECT product_code, description, category, brand, current_price, 
-        #                quantity_available, unit_of_measure, part_numbers, is_available
-        #         FROM products 
-        #         WHERE {where_clause}
-        #         ORDER BY 
-        #             CASE WHEN product_code LIKE %s THEN 1 ELSE 2 END,
-        #             CASE WHEN description LIKE %s THEN 1 ELSE 2 END,
-        #             brand, description
-        #         LIMIT 10
-        #     """
-        #     # Add relevance sorting parameters
-        #     params.extend([f"%{query.strip()}%", f"%{query.strip()}%"])
-            
-        #     results = db.execute_query(search_query, params)
-            
-        #     products = [self._format_product(row) for row in results]
-            
-        #     db.disconnect()
-        #     return {
-        #         "products": products,
-        #         "count": len(products),
-        #         "query": query,
-        #         "filters_applied": filters or {}
-        #     }
-            
-        # except Exception as e:
-        #     self.logger.error(f"Error searching products: {str(e)}")
-        #     raise
-
-    def search_products_by_codes():
-        """Search products by multiple product codes or partial product code match (Flask endpoint function)"""
-        try:
-            from flask import request
-            
-            # Get query parameters
-            product_codes = request.args.get('codes')  # Comma-separated list
-            partial_code = request.args.get('partial')  # Partial code search
-            exact = request.args.get('exact', 'false').lower() == 'true'  # Exact match flag
-            
-            if not product_codes and not partial_code:
-                return jsonify({"error": "Either 'codes' or 'partial' parameter is required"}), 400
-            
-            service = ProductService()
-            
-            if product_codes:
-                # Handle multiple specific product codes
-                code_list = [code.strip() for code in product_codes.split(',')]
-                products = []
-                for code in code_list:
-                    product = service.get_product_by_code(code)
-                    if product:
-                        products.append(product)
-                
-                return jsonify({
-                    "products": products,
-                    "count": len(products)
-                }), 200
-            
-            elif partial_code:
-                # Handle partial search
-                if exact:
-                    # Exact match
-                    product = service.get_product_by_code(partial_code)
-                    products = [product] if product else []
-                else:
-                    # Partial match using search
-                    result = service.search_products(partial_code)
-                    products = result["products"]
-                
-                return jsonify({
-                    "products": products,
-                    "count": len(products)
-                }), 200
+            return related[:limit]
             
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
-        
-    def get_products_by_category(self, category: str) -> List[Dict[str, Any]]:
-        """
-        Get products by category
-        
-        Args:
-            category: Product category
-            
-        Returns:
-            List of products in the category
-        """
-        try:
-            if not category or not category.strip():
-                raise ValueError("Category is required")
-            
-            db = self._get_db_connection()
-            
-            query = """
-                SELECT product_code, description, category, brand, current_price, 
-                       quantity_available, unit_of_measure, part_numbers, is_available
-                FROM products 
-                WHERE category = %s AND is_available = TRUE
-                ORDER BY brand, description
-            """
-            
-            results = db.execute_query(query, [category.strip()])
-            products = [self._format_product(row) for row in results]
-            
-            db.disconnect()
-            return products
-            
-        except Exception as e:
-            self.logger.error(f"Error getting products by category {category}: {str(e)}")
-            raise
-    
-    def get_products_by_brand(self, brand: str) -> List[Dict[str, Any]]:
-        """
-        Get products by brand
-        
-        Args:
-            brand: Product brand
-            
-        Returns:
-            List of products from the brand
-        """
-        try:
-            if not brand or not brand.strip():
-                raise ValueError("Brand is required")
-            
-            db = self._get_db_connection()
-            
-            query = """
-                SELECT product_code, description, category, brand, current_price, 
-                       quantity_available, unit_of_measure, part_numbers, is_available
-                FROM products 
-                WHERE brand = %s AND is_available = TRUE
-                ORDER BY category, description
-            """
-            
-            results = db.execute_query(query, [brand.strip()])
-            products = [self._format_product(row) for row in results]
-            
-            db.disconnect()
-            return products
-            
-        except Exception as e:
-            self.logger.error(f"Error getting products by brand {brand}: {str(e)}")
-            raise
+            self.logger.error(f"Error getting related products for {product_code}: {str(e)}")
+            return []
     
     def get_product_statistics(self) -> Dict[str, Any]:
         """
-        Get product statistics and metrics
+        Get product statistics and metrics for admin dashboard
         
         Returns:
             Dictionary containing various product statistics
@@ -560,28 +357,54 @@ class ProductService:
         try:
             db = self._get_db_connection()
             
-            # Total products
-            total_query = "SELECT COUNT(*) FROM products"
-            total_result = db.execute_query(total_query)
-            total_products = total_result[0][0] if total_result else 0
+            stats = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "summary": {},
+                "by_category": [],
+                "by_brand": [],
+                "price_distribution": {},
+                "stock_alerts": []
+            }
             
-            # Available products
-            available_query = "SELECT COUNT(*) FROM products WHERE is_available = TRUE"
-            available_result = db.execute_query(available_query)
-            available_products = available_result[0][0] if available_result else 0
+            # Summary statistics
+            summary_query = """
+                SELECT 
+                    COUNT(*) as total_products,
+                    COUNT(CASE WHEN is_available = TRUE THEN 1 END) as available_products,
+                    COUNT(CASE WHEN quantity_available = 0 THEN 1 END) as out_of_stock,
+                    COUNT(CASE WHEN quantity_available < 10 AND quantity_available > 0 THEN 1 END) as low_stock
+                FROM products
+            """
+            
+            result = db.execute_query(summary_query)
+            if result:
+                row = result[0]
+                stats["summary"] = {
+                    "total_products": row[0],
+                    "available_products": row[1],
+                    "out_of_stock": row[2],
+                    "low_stock": row[3]
+                }
             
             # Products by category
             category_query = """
-                SELECT category, COUNT(*) as count 
+                SELECT category, COUNT(*) as count, AVG(current_price) as avg_price
                 FROM products 
                 WHERE is_available = TRUE 
                 GROUP BY category 
                 ORDER BY count DESC
             """
             category_results = db.execute_query(category_query)
-            categories = [{"category": row[0], "count": row[1]} for row in category_results]
+            stats["by_category"] = [
+                {
+                    "category": row[0], 
+                    "count": row[1],
+                    "average_price": round(float(row[2]), 2) if row[2] else 0
+                } 
+                for row in category_results
+            ]
             
-            # Products by brand
+            # Top brands
             brand_query = """
                 SELECT brand, COUNT(*) as count 
                 FROM products 
@@ -591,47 +414,88 @@ class ProductService:
                 LIMIT 10
             """
             brand_results = db.execute_query(brand_query)
-            top_brands = [{"brand": row[0], "count": row[1]} for row in brand_results]
+            stats["by_brand"] = [
+                {"brand": row[0], "count": row[1]} 
+                for row in brand_results
+            ]
             
-            # Price statistics
+            # Price distribution - MySQL compatible version
             price_query = """
                 SELECT 
                     MIN(current_price) as min_price,
                     MAX(current_price) as max_price,
-                    AVG(current_price) as avg_price,
-                    COUNT(CASE WHEN current_price < 100 THEN 1 END) as under_100,
-                    COUNT(CASE WHEN current_price BETWEEN 100 AND 500 THEN 1 END) as between_100_500,
-                    COUNT(CASE WHEN current_price > 500 THEN 1 END) as over_500
+                    AVG(current_price) as avg_price
                 FROM products 
                 WHERE is_available = TRUE AND current_price > 0
             """
             price_result = db.execute_query(price_query)
             
-            price_stats = {}
             if price_result and price_result[0][0] is not None:
                 row = price_result[0]
-                price_stats = {
-                    "min_price": float(row[0]),
-                    "max_price": float(row[1]),
-                    "avg_price": round(float(row[2]), 2),
-                    "price_ranges": {
-                        "under_100": row[3],
-                        "between_100_500": row[4],
-                        "over_500": row[5]
-                    }
+                stats["price_distribution"] = {
+                    "min": float(row[0]),
+                    "max": float(row[1]),
+                    "average": round(float(row[2]), 2)
                 }
+                
+                # Calculate median separately for MySQL
+                median_query = """
+                    SELECT current_price
+                    FROM (
+                        SELECT current_price, @rownum:=@rownum+1 as row_number, @total_rows:=@rownum
+                        FROM products, (SELECT @rownum:=0) r
+                        WHERE is_available = TRUE AND current_price > 0
+                        ORDER BY current_price
+                    ) as t
+                    WHERE row_number IN (FLOOR((@total_rows+1)/2), FLOOR((@total_rows+2)/2))
+                """
+                
+                # Alternative simpler approach for median
+                count_query = "SELECT COUNT(*) FROM products WHERE is_available = TRUE AND current_price > 0"
+                count_result = db.execute_query(count_query)
+                total_count = count_result[0][0] if count_result else 0
+                
+                if total_count > 0:
+                    # For MySQL, we'll use a simpler approach to get approximate median
+                    limit = 1
+                    offset = total_count // 2
+                    median_simple_query = """
+                        SELECT current_price 
+                        FROM products 
+                        WHERE is_available = TRUE AND current_price > 0
+                        ORDER BY current_price
+                        LIMIT %s OFFSET %s
+                    """
+                    median_result = db.execute_query(median_simple_query, [limit, offset])
+                    if median_result:
+                        stats["price_distribution"]["median"] = float(median_result[0][0])
+                    else:
+                        stats["price_distribution"]["median"] = stats["price_distribution"]["average"]
+                else:
+                    stats["price_distribution"]["median"] = 0
             
-            statistics = {
-                "total_products": total_products,
-                "available_products": available_products,
-                "unavailable_products": total_products - available_products,
-                "categories": categories,
-                "top_brands": top_brands,
-                "price_statistics": price_stats
-            }
+            # Get low stock alerts
+            low_stock_query = """
+                SELECT product_code, description, quantity_available
+                FROM products
+                WHERE is_available = TRUE 
+                AND quantity_available > 0 
+                AND quantity_available < 10
+                ORDER BY quantity_available ASC
+                LIMIT 20
+            """
+            low_stock_results = db.execute_query(low_stock_query)
+            stats["stock_alerts"] = [
+                {
+                    "product_code": row[0],
+                    "description": row[1],
+                    "quantity_available": row[2]
+                }
+                for row in low_stock_results
+            ]
             
             db.disconnect()
-            return statistics
+            return stats
             
         except Exception as e:
             self.logger.error(f"Error getting product statistics: {str(e)}")
@@ -697,83 +561,68 @@ class ProductService:
                 if len(description) > 1000:
                     errors.append("Description cannot exceed 1000 characters")
             
-            # Category and brand validation
-            for field in ["category", "brand"]:
-                if product_data.get(field):
-                    value = product_data[field].strip()
-                    if len(value) > 100:
-                        errors.append(f"{field.capitalize()} cannot exceed 100 characters")
-            
-            # Unit of measure validation
-            if product_data.get("unit_of_measure"):
-                uom = product_data["unit_of_measure"].strip()
-                if len(uom) > 20:
-                    errors.append("Unit of measure cannot exceed 20 characters")
-            
             return len(errors) == 0, errors
             
         except Exception as e:
             self.logger.error(f"Error validating product data: {str(e)}")
             return False, [f"Validation error: {str(e)}"]
     
-    def get_categories(self) -> List[str]:
-        """Get all available product categories"""
+    def get_filter_options(self) -> Dict[str, List[Any]]:
+        """
+        Get available filter options for the product catalog
+        
+        Returns:
+            Dictionary with available categories, brands, and price ranges
+        """
         try:
             db = self._get_db_connection()
             
-            query = """
+            # Get categories
+            category_query = """
                 SELECT DISTINCT category 
                 FROM products 
-                WHERE category IS NOT NULL AND category != ''
+                WHERE category IS NOT NULL AND category != '' AND is_available = TRUE
                 ORDER BY category
             """
+            categories = [row[0] for row in db.execute_query(category_query)]
             
-            results = db.execute_query(query)
-            categories = [row[0] for row in results if row[0]]
-            
-            db.disconnect()
-            return categories
-            
-        except Exception as e:
-            self.logger.error(f"Error getting categories: {str(e)}")
-            raise
-    
-    def get_brands(self) -> List[str]:
-        """Get all available product brands"""
-        try:
-            db = self._get_db_connection()
-            
-            query = """
+            # Get brands
+            brand_query = """
                 SELECT DISTINCT brand 
                 FROM products 
-                WHERE brand IS NOT NULL AND brand != ''
+                WHERE brand IS NOT NULL AND brand != '' AND is_available = TRUE
                 ORDER BY brand
             """
+            brands = [row[0] for row in db.execute_query(brand_query)]
             
-            results = db.execute_query(query)
-            brands = [row[0] for row in results if row[0]]
+            # Get price range
+            price_query = """
+                SELECT MIN(current_price), MAX(current_price)
+                FROM products
+                WHERE is_available = TRUE AND current_price > 0
+            """
+            price_result = db.execute_query(price_query)
+            
+            price_range = {
+                "min": float(price_result[0][0]) if price_result and price_result[0][0] else 0,
+                "max": float(price_result[0][1]) if price_result and price_result[0][1] else 0
+            }
             
             db.disconnect()
-            return brands
+            
+            return {
+                "categories": categories,
+                "brands": brands,
+                "price_range": price_range,
+                "sort_options": [
+                    {"value": "relevance", "label": "Relevance"},
+                    {"value": "price_asc", "label": "Price: Low to High"},
+                    {"value": "price_desc", "label": "Price: High to Low"},
+                    {"value": "name_asc", "label": "Name: A to Z"},
+                    {"value": "name_desc", "label": "Name: Z to A"}
+                ]
+            }
             
         except Exception as e:
-            self.logger.error(f"Error getting brands: {str(e)}")
+            self.logger.error(f"Error getting filter options: {str(e)}")
             raise
-
-
-    # NotImplemented
-    # def _format_product(self, row) -> Dict:
-    #     """Format database row into product dictionary"""
-    #     # Implementation depends on your database structure
-    #     # This is a placeholder
-    #     return {
-    #         'product_code': row[0],
-    #         'description': row[1],
-    #         'category': row[2],
-    #         'brand': row[3],
-    #         'current_price': row[4],
-    #         'quantity_available': row[5],
-    #         'unit_of_measure': row[6],
-    #         'part_numbers': row[7],
-    #         'is_available': row[8]
-    #     }
