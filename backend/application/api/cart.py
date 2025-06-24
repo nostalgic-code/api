@@ -1,6 +1,5 @@
 from flask import Blueprint, request, jsonify
-from application.services.CartService import CartService
-from application.services.order_service import OrderService
+from application.services.cart_service import CartService
 
 cart_bp = Blueprint('cart', __name__, url_prefix='/cart')
 cart_service = CartService()
