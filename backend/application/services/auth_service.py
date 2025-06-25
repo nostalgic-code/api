@@ -2,11 +2,12 @@
 Authentication Service Module
 
 This module provides authentication functionality for the marketplace application,
-supporting both CustomerUsers and PlatformUsers.
+supporting both CustomerUsers and PlatformUsers, including registration.
 
 Key Features:
 - Multi-user type authentication (CustomerUser and PlatformUser)
-- Phone number based authentication
+- Customer user registration with validation
+- Password and phone number based authentication
 - OTP generation and verification
 - User status and role validation
 - SMS integration for OTP delivery
@@ -17,29 +18,25 @@ Classes:
     AuthService: Main authentication service class
 
 Author: Development Team
-Version: 4.0
+Version: 5.0
 """
 
-import re
-import random
-import string
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Union
+from typing import Dict
 import logging
-import hashlib
-import secrets
+import bcrypt
 
 from application import db
-from application.models.customer_user import CustomerUser, CustomerUserStatus
-from application.models.platform_user import PlatformUser
+from application.models.customer import Customer, CustomerStatus
+from application.models.customer_user import CustomerUser, CustomerUserStatus, CustomerUserRole
 from application.models.user_otp import UserOTP
 from application.models.user_session import UserSession
 from application.models.permission_code import PermissionCode
-from application.services.sms_service import sms_service
+from application.services.helpers import auth_service_helpers as auth_helpers
 
 class AuthService:
     """
-    Authentication service for phone-based OTP authentication.
+    Authentication service for password and phone-based OTP authentication.
     
     Handles both CustomerUser and PlatformUser authentication flows.
     """
@@ -50,19 +47,274 @@ class AuthService:
         self.otp_length = 6
         self.logger = logging.getLogger(__name__)
     
-    def generate_otp(self) -> str:
-        """Generate a random OTP code."""
-        return ''.join(random.choices(string.digits, k=self.otp_length))
+    def create_customer_user(self, registration_data: Dict) -> Dict:
+        """
+        Register a new customer user with soft validation against customer data.
+        
+        Args:
+            registration_data: Dict containing:
+                - full_name: User's full name (required)
+                - email: User's email address (required)
+                - password: User's password (required)
+                - phone: User's phone number (required)
+                - customer_code: Company's customer code (required)
+                - customer_name: Company name for validation (required)
+                - customer_account_number: Company account number for validation (required)
+        
+        Returns:
+            Dict with success status and user data or error message
+        """
+        try:
+            # Extract and validate required fields
+            full_name = registration_data.get('full_name', '').strip()
+            email = registration_data.get('email', '').strip().lower()
+            password = registration_data.get('password', '')
+            phone = registration_data.get('phone', '').strip()
+            customer_code = registration_data.get('customer_code', '').strip()
+            customer_name = registration_data.get('customer_name', '').strip()
+            customer_account_number = registration_data.get('customer_account_number', '').strip()
+            
+            # Validate required fields
+            if not all([full_name, email, password, phone, customer_code, customer_name, customer_account_number]):
+                return {
+                    'success': False,
+                    'message': 'All fields are required: full name, email, password, phone, customer code, customer name, and account number',
+                    'error_code': 'MISSING_FIELDS'
+                }
+            
+            # Validate email format
+            if not auth_helpers.validate_email(email):
+                return {
+                    'success': False,
+                    'message': 'Invalid email format',
+                    'error_code': 'INVALID_EMAIL'
+                }
+            
+            # Validate phone format
+            if not auth_helpers.validate_phone(phone):
+                return {
+                    'success': False,
+                    'message': 'Invalid phone number format',
+                    'error_code': 'INVALID_PHONE'
+                }
+            
+            # Validate password strength
+            if len(password) < 8:
+                return {
+                    'success': False,
+                    'message': 'Password must be at least 8 characters long',
+                    'error_code': 'WEAK_PASSWORD'
+                }
+            
+            # Check if email already exists
+            if CustomerUser.query.filter_by(email=email).first():
+                return {
+                    'success': False,
+                    'message': 'Email address is already registered',
+                    'error_code': 'EMAIL_EXISTS'
+                }
+            
+            # Check if phone already exists
+            if CustomerUser.query.filter_by(phone=phone).first():
+                return {
+                    'success': False,
+                    'message': 'Phone number is already registered',
+                    'error_code': 'PHONE_EXISTS'
+                }
+            
+            # Initialize approval eligibility tracking
+            approval_eligibility = {
+                'status': 'ELIGIBLE',  # Will be updated based on validation
+                'validation_date': datetime.utcnow().isoformat(),
+                'mismatches': [],
+                'warnings': []
+            }
+            
+            # Soft validation of customer information
+            customer = Customer.query.filter_by(
+                customer_code=customer_code
+            ).first()
+            
+            if not customer:
+                # Customer code not found - this is a critical issue
+                approval_eligibility['status'] = 'INELIGIBLE'
+                approval_eligibility['mismatches'].append({
+                    'field': 'customer_code',
+                    'provided': customer_code,
+                    'expected': None,
+                    'message': 'Customer code not found in system'
+                })
+            else:
+                # Validate customer details (soft validation)
+                if customer.name.lower() != customer_name.lower():
+                    approval_eligibility['status'] = 'REQUIRES_REVIEW'
+                    approval_eligibility['mismatches'].append({
+                        'field': 'customer_name',
+                        'provided': customer_name,
+                        'expected': customer.name,
+                        'message': 'Customer name does not match records'
+                    })
+                
+                if customer.account_number != customer_account_number:
+                    approval_eligibility['status'] = 'REQUIRES_REVIEW'
+                    approval_eligibility['mismatches'].append({
+                        'field': 'customer_account_number',
+                        'provided': customer_account_number,
+                        'expected': customer.account_number,
+                        'message': 'Account number does not match records'
+                    })
+                
+                if customer.status != CustomerStatus.APPROVED:
+                    approval_eligibility['warnings'].append({
+                        'field': 'customer_status',
+                        'current_status': customer.status.value,
+                        'message': 'Customer account is not active'
+                    })
+                    # Don't set to INELIGIBLE as this might be temporary
+                    if approval_eligibility['status'] == 'ELIGIBLE':
+                        approval_eligibility['status'] = 'REQUIRES_REVIEW'
+            
+            # If customer not found, create a placeholder customer_id
+            customer_id = customer.id if customer else None
+            
+            # Hash password
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            # Get RESTRICTED permission code
+            restricted_permission = PermissionCode.query.filter_by(
+                code='RESTRICTED'
+            ).first()
+            
+            # Create new user with OWNER role and RESTRICTED permissions
+            new_user = CustomerUser(
+                customer_id=customer_id,
+                name=full_name,
+                email=email,
+                phone=phone,
+                password=password_hash,
+                role=CustomerUserRole.OWNER,  # Default to OWNER role
+                permission_code='RESTRICTED' if restricted_permission else None,
+                status=CustomerUserStatus.PENDING,  # Always pending as per Phase 2
+                depot_access=[],  # Empty by default, assigned by admins later
+                permissions={},    # Empty initially, will be populated on approval
+                approval_eligibility=approval_eligibility  # Store validation results
+            )
+            
+            db.session.add(new_user)
+            db.session.commit()
+            
+            self.logger.info(
+                f"New customer user registered: {email} "
+                f"with approval eligibility status: {approval_eligibility['status']}"
+            )
+            
+            # Always return success to the user (soft validation)
+            return {
+                'success': True,
+                'message': 'Registration successful. Your account is pending approval from your company administrator.',
+                'user': {
+                    'id': new_user.id,
+                    'name': new_user.name,
+                    'email': new_user.email,
+                    'phone': new_user.phone,
+                    'role': new_user.role.value,
+                    'status': new_user.status.value,
+                    'customer_name': customer_name  # Return what they provided
+                }
+            }
+            
+        except Exception as e:
+            db.session.rollback()
+            self.logger.error(f"Error registering user: {str(e)}")
+            return {
+                'success': False,
+                'message': 'Registration failed. Please try again.',
+                'error_code': 'REGISTRATION_ERROR'
+            }
     
-    def hash_otp(self, otp: str) -> str:
-        """Hash OTP for secure storage."""
-        return hashlib.sha256(otp.encode()).hexdigest()
+    def authenticate_with_password(self, email: str, password: str) -> Dict:
+        """
+        Authenticate customer user with email and password.
+        
+        Args:
+            email: User's email address
+            password: User's password
+            
+        Returns:
+            Dict with authentication result and session token
+        """
+        try:
+            # Find user by email
+            user = CustomerUser.query.filter_by(email=email.lower()).first()
+            
+            if not user:
+                return {
+                    'success': False,
+                    'message': 'Invalid email or password',
+                    'error_code': 'INVALID_CREDENTIALS'
+                }
+            
+            # Check password
+            if not bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+                return {
+                    'success': False,
+                    'message': 'Invalid email or password',
+                    'error_code': 'INVALID_CREDENTIALS'
+                }
+            
+            # Validate user status
+            validation = auth_helpers.validate_customer_user_status(user)
+            if not validation['valid']:
+                return validation
+            
+            # Generate session token
+            session_token = auth_helpers.generate_session_token()
+            
+            # Update last login
+            user.last_login = datetime.utcnow()
+            user.updated_at = datetime.utcnow()
+            
+            # Clear existing sessions for this user
+            UserSession.query.filter_by(
+                user_id=user.id, 
+                user_type='customer_user'
+            ).delete()
+            
+            # Create new session
+            expires_at = datetime.utcnow() + timedelta(hours=24)
+            user_session = UserSession(
+                user_id=user.id,
+                user_type='customer_user',
+                session_token=session_token,
+                expires_at=expires_at
+            )
+            db.session.add(user_session)
+            db.session.commit()
+            
+            self.logger.info(f"User {email} authenticated successfully with password")
+            
+            return {
+                'success': True,
+                'message': 'Authentication successful',
+                'session_token': session_token,
+                'user_type': 'customer_user',
+                'user': auth_helpers.build_customer_user_payload(user)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error authenticating user {email}: {e}")
+            db.session.rollback()
+            return {
+                'success': False,
+                'message': 'Authentication failed. Please try again.',
+                'error_code': 'AUTH_ERROR'
+            }
     
     def send_otp(self, phone: str) -> Dict:
         """Send OTP to user's phone number (supports both user types)."""
         try:
             # Validate phone number format
-            if not self._validate_phone(phone):
+            if not auth_helpers.validate_phone(phone):
                 return {
                     'success': False,
                     'message': 'Invalid phone number format',
@@ -70,7 +322,7 @@ class AuthService:
                 }
             
             # Find user in either table
-            user, user_type = self._find_user_by_phone(phone)
+            user, user_type = auth_helpers.find_user_by_phone(phone)
             
             if not user:
                 return {
@@ -81,14 +333,14 @@ class AuthService:
             
             # Validate user status based on type
             if user_type == 'customer_user':
-                validation = self._validate_customer_user_status(user)
+                validation = auth_helpers.validate_customer_user_status(user)
                 if not validation['valid']:
                     return validation
             # Platform users don't need status validation
             
             # Generate and store OTP
-            otp = self.generate_otp()
-            hashed_otp = self.hash_otp(otp)
+            otp = auth_helpers.generate_otp(self.otp_length)
+            hashed_otp = auth_helpers.hash_otp(otp)
             expires_at = datetime.utcnow() + timedelta(minutes=self.otp_expiry_minutes)
             
             # Clear any existing OTPs for this phone
@@ -105,7 +357,7 @@ class AuthService:
             db.session.commit()
             
             # Send SMS
-            sms_sent = self._send_sms(phone, otp)
+            sms_sent = auth_helpers.send_sms(phone, otp, self.otp_length)
             
             if sms_sent:
                 self.logger.info(f"OTP sent successfully to {phone} ({user_type})")
@@ -155,7 +407,7 @@ class AuthService:
                 }
             
             # Verify OTP
-            if self.hash_otp(otp) != user_otp.otp_hash:
+            if auth_helpers.hash_otp(otp) != user_otp.otp_hash:
                 # Increment attempts
                 user_otp.attempts += 1
                 db.session.commit()
@@ -166,7 +418,7 @@ class AuthService:
                 }
             
             # OTP is valid, get user data
-            user, user_type = self._find_user_by_phone(phone)
+            user, user_type = auth_helpers.find_user_by_phone(phone)
             
             if not user:
                 return {
@@ -177,12 +429,12 @@ class AuthService:
             
             # Final validation for customer users
             if user_type == 'customer_user':
-                validation = self._validate_customer_user_status(user)
+                validation = auth_helpers.validate_customer_user_status(user)
                 if not validation['valid']:
                     return validation
             
             # Generate session token
-            session_token = self._generate_session_token()
+            session_token = auth_helpers.generate_session_token()
             
             # Update last login
             user.last_login = datetime.utcnow()
@@ -219,9 +471,9 @@ class AuthService:
             }
             
             if user_type == 'customer_user':
-                response['user'] = self._build_customer_user_payload(user)
+                response['user'] = auth_helpers.build_customer_user_payload(user)
             else:
-                response['user'] = self._build_platform_user_payload(user)
+                response['user'] = auth_helpers.build_platform_user_payload(user)
             
             return response
             
@@ -263,9 +515,9 @@ class AuthService:
                     return {'valid': False, 'error': 'User not approved'}
                 if user.customer.status.value != 'approved':
                     return {'valid': False, 'error': 'Customer not active'}
-                response['user'] = self._build_customer_user_payload(user)
+                response['user'] = auth_helpers.build_customer_user_payload(user)
             else:
-                response['user'] = self._build_platform_user_payload(user)
+                response['user'] = auth_helpers.build_platform_user_payload(user)
             
             return response
             
@@ -284,125 +536,3 @@ class AuthService:
             self.logger.error(f"Error during logout: {e}")
             db.session.rollback()
             return False
-    
-    # Helper methods
-    def _find_user_by_phone(self, phone: str) -> tuple[Optional[Union[CustomerUser, PlatformUser]], Optional[str]]:
-        """Find user in either CustomerUser or PlatformUser table"""
-        # Check CustomerUser first
-        customer_user = CustomerUser.query.filter_by(phone=phone).first()
-        if customer_user:
-            return customer_user, 'customer_user'
-        
-        # Check PlatformUser
-        platform_user = PlatformUser.query.filter_by(phone=phone).first()
-        if platform_user:
-            return platform_user, 'platform_user'
-        
-        return None, None
-    
-    def _validate_customer_user_status(self, user: CustomerUser) -> Dict:
-        """Validate customer user and their parent customer status"""
-        if user.status != CustomerUserStatus.APPROVED:
-            return {
-                'valid': False,
-                'success': False,
-                'message': 'Your account is pending approval.',
-                'error_code': 'USER_NOT_APPROVED'
-            }
-        
-        if user.customer.status.value != 'approved':
-            return {
-                'valid': False,
-                'success': False,
-                'message': 'Customer account is not active.',
-                'error_code': 'CUSTOMER_NOT_ACTIVE'
-            }
-        
-        return {'valid': True}
-    
-    def _build_customer_user_payload(self, user: CustomerUser) -> Dict:
-        """Build enhanced payload for customer users"""
-        # Get effective permissions
-        effective_permissions = self._calculate_effective_permissions(user)
-        
-        return {
-            'id': user.id,
-            'name': user.name,
-            'email': user.email,
-            'phone': user.phone,
-            'customer_id': user.customer_id,
-            'customer_name': user.customer.name if user.customer else None,
-            'role': user.role.value if user.role else None,
-            'permissions': effective_permissions,
-            'depot_access': user.depot_access or [],
-            'status': user.status.value if user.status else None,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'last_login': user.last_login.isoformat() if user.last_login else None
-        }
-    
-    def _build_platform_user_payload(self, user: PlatformUser) -> Dict:
-        """Build payload for platform users"""
-        return {
-            'id': user.id,
-            'name': user.name,
-            'email': user.email,
-            'phone': user.phone,
-            'role': user.role.value if user.role else None,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'last_login': user.last_login.isoformat() if user.last_login else None
-        }
-    
-    def _calculate_effective_permissions(self, user: CustomerUser) -> Dict:
-        """Calculate effective permissions by merging default and custom"""
-        permissions = {}
-        
-        # Start with permission code defaults if available
-        if user.permission_code:
-            permission_code = PermissionCode.query.get(user.permission_code)
-            if permission_code and permission_code.default_permissions:
-                permissions = permission_code.default_permissions.copy()
-        
-        # Override with custom permissions
-        if user.permissions:
-            for key, value in user.permissions.items():
-                if isinstance(value, dict) and key in permissions:
-                    permissions[key].update(value)
-                else:
-                    permissions[key] = value
-        
-        return permissions
-    
-    def _validate_phone(self, phone: str) -> bool:
-        """Validate phone number format"""
-        pattern = r'^(\+27|0)[0-9]{9}$'
-        return bool(re.match(pattern, phone))
-    
-    def _send_sms(self, phone: str, otp: str) -> bool:
-        """Send SMS with OTP using BulkSMS service"""
-        try:
-            # Log OTP to console for development
-            self.logger.warning(f"=== OTP FOR DEVELOPMENT ===")
-            self.logger.warning(f"Phone: {phone}")
-            self.logger.warning(f"OTP Code: {otp}")
-            self.logger.warning(f"===========================")
-            
-            # Try to send SMS but don't fail if it doesn't work
-            try:
-                success = sms_service.send_otp(phone, otp)
-                if success:
-                    self.logger.info(f"SMS sent successfully to {phone}")
-                else:
-                    self.logger.warning(f"SMS service failed for {phone}, but OTP is logged above")
-            except Exception as sms_error:
-                self.logger.warning(f"SMS service error for {phone}: {sms_error}, but OTP is logged above")
-            
-            # Always return True in development so the flow continues
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in _send_sms for {phone}: {e}")
-            return False
-    
-    def _generate_session_token(self) -> str:
-        """Generate secure session token"""
-        return secrets.token_urlsafe(32)

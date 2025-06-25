@@ -29,6 +29,7 @@ from application.models.customer_user import CustomerUser, CustomerUserStatus, C
 from application.models.platform_user import PlatformUser
 from application.models.permission_code import PermissionCode
 from application.models.depot import Depot
+from application.services.helpers import user_helpers
 
 
 class AdminService:
@@ -37,7 +38,7 @@ class AdminService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
-    # User Management Methods - Refactored
+    ################################################################################## USER MANAGEMENT METHODS ##################################################################################
     
     def get_users(self, filters: Dict[str, Any], pagination: Dict[str, int]) -> Dict:
         """
@@ -65,11 +66,11 @@ class AdminService:
             query = CustomerUser.query
             
             # Apply filters
-            query = self._apply_user_filters(query, filters)
+            query = user_helpers.apply_user_filters(query, filters)
             
             # Apply sorting
             sort_field = filters.get('sort', '-created_at')
-            query = self._apply_sorting(query, CustomerUser, sort_field)
+            query = user_helpers.apply_sorting(query, CustomerUser, sort_field)
             
             # Get total count before pagination
             total_count = query.count()
@@ -83,7 +84,7 @@ class AdminService:
             
             # Format response
             result = {
-                'data': [self._format_user_response(user) for user in users],
+                'data': [user_helpers.format_user_response(user) for user in users],
                 'meta': {
                     'total': total_count,
                     'page': page,
@@ -116,14 +117,15 @@ class AdminService:
                 raise ValueError(f"User with ID {user_id} not found")
             
             # Get basic user info
-            user_data = self._format_user_response(user)
+            user_data = user_helpers.format_user_response(user)
             
             # Add detailed information
             user_data['details'] = {
-                'permission_code_details': self._get_permission_code_details(user.permission_code) if user.permission_code else None,
-                'depot_names': self._get_depot_names(user.depot_access) if user.depot_access else [],
-                'activity_summary': self._get_user_activity_summary(user_id),
-                'approval_info': self._get_approval_info(user) if user.status != CustomerUserStatus.PENDING else None
+                'permission_code_details': user_helpers.get_permission_code_details(user.permission_code) if user.permission_code else None,
+                'depot_names': user_helpers.get_depot_names(user.depot_access) if user.depot_access else [],
+                'activity_summary': user_helpers.get_user_activity_summary(user_id),
+                'approval_info': user_helpers.get_approval_info(user) if user.status != CustomerUserStatus.PENDING else None,
+                'approval_eligibility_details': user_helpers.format_approval_eligibility(user.approval_eligibility) if user.approval_eligibility else None
             }
             
             return user_data
@@ -143,7 +145,8 @@ class AdminService:
                 - actor_id: ID of platform user performing action
                 - reason: str (required for reject)
                 - depot_access: list (optional for approve)
-                - custom_permissions: dict (optional for approve)
+                - permission_code: str (optional for approve)
+                - force_approve: bool (optional for approve)
                 
         Returns:
             Dict with action result
@@ -168,24 +171,24 @@ class AdminService:
                 }
             
             if action == 'approve':
-                return self._approve_user_action(user, context)
+                return user_helpers.approve_user_action(user, context)
             else:
-                return self._reject_user_action(user, context)
+                return user_helpers.reject_user_action(user, context)
                 
         except Exception as e:
             db.session.rollback()
             self.logger.error(f"Error performing {action} on user {user_id}: {str(e)}")
             raise
-    
+
     def update_user(self, user_id: int, updates: Dict) -> Dict:
         """
-        Update user attributes (role, permissions, depot_access)
+        Update user attributes (role, permission_code, depot_access)
         
         Args:
             user_id: ID of the user
             updates: Dict containing fields to update:
                 - role: str
-                - permissions: dict
+                - permission_code: str
                 - depot_access: list
                 - updated_by: int (ID of platform user)
                 
@@ -205,18 +208,21 @@ class AdminService:
             
             # Update role if provided
             if 'role' in updates:
-                result = self._update_user_role(user, updates['role'])
+                result = user_helpers.update_user_role(user, updates['role'])
                 if result:
                     updated_fields.append('role')
             
-            # Update permissions if provided
-            if 'permissions' in updates:
-                user.permissions = updates['permissions']
+            # Update permission_code if provided (this will also update permissions)
+            if 'permission_code' in updates:
+                result = user_helpers.update_permission_code(user, updates['permission_code'])
+                if not result['success']:
+                    return result
+                updated_fields.append('permission_code')
                 updated_fields.append('permissions')
             
             # Update depot access if provided
             if 'depot_access' in updates:
-                validation_result = self._validate_depot_access(updates['depot_access'])
+                validation_result = user_helpers.validate_depot_access(updates['depot_access'])
                 if not validation_result['valid']:
                     return {
                         'success': False,
@@ -238,251 +244,13 @@ class AdminService:
                 'success': True,
                 'message': 'User updated successfully',
                 'updated_fields': updated_fields,
-                'user': self._format_user_response(user)
+                'user': user_helpers.format_user_response(user)
             }
             
         except Exception as e:
             db.session.rollback()
             self.logger.error(f"Error updating user {user_id}: {str(e)}")
             raise
-    
-    # Helper Methods
-    
-    def _apply_user_filters(self, query: Query, filters: Dict) -> Query:
-        """Apply filters to user query"""
-        
-        # Status filter (supports multiple values)
-        if filters.get('status'):
-            statuses = filters['status'] if isinstance(filters['status'], list) else [filters['status']]
-            status_enums = []
-            for status in statuses:
-                if status == 'pending':
-                    status_enums.append(CustomerUserStatus.PENDING)
-                elif status == 'approved':
-                    status_enums.append(CustomerUserStatus.APPROVED)
-                elif status == 'rejected':
-                    status_enums.append(CustomerUserStatus.REJECTED)
-            if status_enums:
-                query = query.filter(CustomerUser.status.in_(status_enums))
-        
-        # Customer filter (supports multiple values)
-        if filters.get('customer_id'):
-            customer_ids = filters['customer_id'] if isinstance(filters['customer_id'], list) else [filters['customer_id']]
-            query = query.filter(CustomerUser.customer_id.in_(customer_ids))
-        
-        # Role filter (supports multiple values)
-        if filters.get('role'):
-            roles = filters['role'] if isinstance(filters['role'], list) else [filters['role']]
-            role_enums = [CustomerUserRole[role.upper()] for role in roles]
-            query = query.filter(CustomerUser.role.in_(role_enums))
-        
-        # Search filter
-        if filters.get('search'):
-            search = f"%{filters['search']}%"
-            query = query.filter(
-                or_(
-                    CustomerUser.name.ilike(search),
-                    CustomerUser.email.ilike(search)
-                )
-            )
-        
-        # Date filters
-        if filters.get('created_after'):
-            query = query.filter(CustomerUser.created_at >= filters['created_after'])
-        if filters.get('created_before'):
-            query = query.filter(CustomerUser.created_at <= filters['created_before'])
-        
-        return query
-    
-    def _apply_sorting(self, query: Query, model, sort_field: str) -> Query:
-        """Apply sorting to query"""
-        if sort_field.startswith('-'):
-            field_name = sort_field[1:]
-            order = 'desc'
-        else:
-            field_name = sort_field
-            order = 'asc'
-        
-        if hasattr(model, field_name):
-            field = getattr(model, field_name)
-            query = query.order_by(field.desc() if order == 'desc' else field.asc())
-        
-        return query
-    
-    def _format_user_response(self, user: CustomerUser) -> Dict:
-        """Format user object for API response"""
-        return {
-            'id': user.id,
-            'name': user.name,
-            'email': user.email,
-            'phone': user.phone,
-            'role': user.role.value,
-            'status': user.status.value,
-            'customer': {
-                'id': user.customer.id,
-                'name': user.customer.name,
-                'code': user.customer.customer_code,
-                'status': user.customer.status.value
-            } if user.customer else None,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
-            'last_login': user.last_login.isoformat() if user.last_login else None,
-            'days_pending': (datetime.utcnow() - user.created_at).days if user.created_at and user.status == CustomerUserStatus.PENDING else None,
-            'depot_access': user.depot_access,
-            'permissions': user.permissions,
-            'permission_code': user.permission_code
-        }
-    
-    def _approve_user_action(self, user: CustomerUser, context: Dict) -> Dict:
-        """Handle user approval"""
-        # Validate depot access if provided
-        if context.get('depot_access'):
-            validation_result = self._validate_depot_access(context['depot_access'])
-            if not validation_result['valid']:
-                return {
-                    'success': False,
-                    'error': validation_result['error'],
-                    'code': 'INVALID_DEPOTS'
-                }
-        
-        # Update user
-        user.status = CustomerUserStatus.APPROVED
-        user.updated_at = datetime.utcnow()
-        
-        if context.get('depot_access') is not None:
-            user.depot_access = context['depot_access']
-        
-        if context.get('custom_permissions') is not None:
-            user.permissions = context['custom_permissions']
-        
-        db.session.commit()
-        
-        self.logger.info(
-            f"User {user.email} approved by platform user {context['actor_id']}"
-        )
-        
-        # TODO: Send approval notification email
-        
-        return {
-            'success': True,
-            'message': f'User {user.email} approved successfully',
-            'user': self._format_user_response(user)
-        }
-    
-    def _reject_user_action(self, user: CustomerUser, context: Dict) -> Dict:
-        """Handle user rejection"""
-        if not context.get('reason'):
-            return {
-                'success': False,
-                'error': 'Rejection reason is required',
-                'code': 'REASON_REQUIRED'
-            }
-        
-        user.status = CustomerUserStatus.REJECTED
-        user.updated_at = datetime.utcnow()
-        
-        # TODO: Store rejection reason in audit log or user table
-        
-        db.session.commit()
-        
-        self.logger.info(
-            f"User {user.email} rejected by platform user {context['actor_id']}. "
-            f"Reason: {context['reason']}"
-        )
-        
-        # TODO: Send rejection notification email
-        
-        return {
-            'success': True,
-            'message': f'User {user.email} rejected',
-            'reason': context['reason'],
-            'user': self._format_user_response(user)
-        }
-    
-    def _update_user_role(self, user: CustomerUser, new_role: str) -> bool:
-        """Update user role and associated permission code"""
-        try:
-            new_role_enum = CustomerUserRole[new_role.upper()]
-        except KeyError:
-            raise ValueError(f'Invalid role: {new_role}')
-        
-        old_role = user.role
-        user.role = new_role_enum
-        
-        # Update permission code to match new role
-        permission_code = PermissionCode.query.filter_by(
-            role=new_role_enum.value
-        ).first()
-        
-        if permission_code:
-            user.permission_code = permission_code.code
-        
-        return True
-    
-    def _validate_depot_access(self, depot_codes: List[str]) -> Dict:
-        """Validate depot codes exist"""
-        valid_depots = {d.code for d in Depot.query.all()}
-        invalid_depots = set(depot_codes) - valid_depots
-        
-        if invalid_depots:
-            return {
-                'valid': False,
-                'error': f'Invalid depot codes: {", ".join(invalid_depots)}'
-            }
-        
-        return {'valid': True}
-    
-    def _get_permission_code_details(self, code: str) -> Optional[Dict]:
-        """Get permission code details"""
-        if not code:
-            return None
-            
-        perm_code = PermissionCode.query.filter_by(code=code).first()
-        if not perm_code:
-            return None
-            
-        return {
-            'code': perm_code.code,
-            'role': perm_code.role,
-            'permissions': perm_code.permissions
-        }
-    
-    def _get_depot_names(self, depot_codes: List[str]) -> List[Dict]:
-        """Get depot names for codes"""
-        if not depot_codes:
-            return []
-            
-        depots = Depot.query.filter(Depot.code.in_(depot_codes)).all()
-        return [{'code': d.code, 'name': d.name} for d in depots]
-    
-    def _get_user_activity_summary(self, user_id: int) -> Dict:
-        """Get user activity summary"""
-        # TODO: Implement when activity tracking is added
-        return {
-            'last_login': None,
-            'total_logins': 0,
-            'last_action': None
-        }
-    
-    def _get_approval_info(self, user: CustomerUser) -> Optional[Dict]:
-        """Get approval/rejection information"""
-        # TODO: Implement when approval tracking fields are added to model
-        return {
-            'approved_at': user.updated_at.isoformat() if user.status == CustomerUserStatus.APPROVED else None,
-            'approved_by': None,  # Will be populated when fields are added
-            'rejected_at': user.updated_at.isoformat() if user.status == CustomerUserStatus.REJECTED else None,
-            'rejected_by': None,  # Will be populated when fields are added
-            'rejection_reason': None  # Will be populated when fields are added
-        }
-    
-    
-    
-    
-    
-    
-    
-    
-    
     
     ################################################################################ CUSTOMER MANAGEMENT METHODS ################################################################################
     
@@ -730,7 +498,7 @@ class AdminService:
             self.logger.error(f"Error updating permissions for user {user_id}: {str(e)}")
             raise
     
-    # System Information Methods
+    ################################################################################  DASHBOARD METHODS ################################################################################
     
     def get_recent_activity(self, limit: int = 10) -> List[Dict]:
         """
@@ -833,7 +601,6 @@ class AdminService:
                 },
                 'depots': {
                     'total': Depot.query.count()
-                    # Removed the 'active' filter since the field doesn't exist
                 },
                 'permission_codes': {
                     'total': PermissionCode.query.count()

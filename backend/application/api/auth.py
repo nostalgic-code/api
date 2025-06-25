@@ -2,12 +2,13 @@
 Authentication API Module
 
 This module provides RESTful API endpoints for user authentication
-including phone-based OTP authentication, session management, and
-new user registration for the multi-tenant system.
+including password-based authentication, phone-based OTP authentication, 
+session management, and new user registration for the multi-tenant system.
 
 Key Features:
-- Customer user registration with company code validation
+- Customer user registration with company validation
 - Multi-user type authentication (CustomerUser and PlatformUser)
+- Password-based authentication
 - Phone number based authentication
 - OTP generation and SMS delivery
 - OTP verification and user authentication
@@ -16,6 +17,7 @@ Key Features:
 
 Endpoints:
     POST /auth/register - Register new customer user
+    POST /auth/login - Login with email and password
     POST /auth/send-otp - Send OTP to user's phone
     POST /auth/verify-otp - Verify OTP and authenticate user
     POST /auth/validate-session - Validate session token
@@ -23,13 +25,12 @@ Endpoints:
     GET /auth/user-info - Get current user information
 
 Author: Development Team
-Version: 2.0
+Version: 3.0
 """
 
 from flask import Blueprint, request, jsonify
 import logging
 from ..services.auth_service import AuthService
-from ..services.registration_service import registration_service
 
 # Create Blueprint for authentication routes
 auth_bp = Blueprint('auth', __name__)
@@ -40,34 +41,35 @@ auth_service = AuthService()
 @auth_bp.route('/register', methods=['POST'])
 def register():
     """
-    Register a new customer user (single-step process).
+    Register a new customer user with soft validation.
     
     Request Body:
         {
-            "customer_code": "CUST001",
-            "name": "John Doe",
+            "full_name": "John Doe",
             "email": "john@company.com",
-            "phone": "+27123456789",  // optional
-            "role": "staff"  // owner, staff, or viewer
+            "password": "securepassword123",
+            "phone": "+27123456789",
+            "customer_code": "CUST001",
+            "customer_name": "ABC Company Ltd",
+            "customer_account_number": "ACC12345"
         }
     
     Response:
         {
             "success": true,
-            "message": "Registration successful. Your account is pending approval.",
+            "message": "Registration successful. Your account is pending approval from your company administrator.",
             "user": {
                 "id": 1,
                 "name": "John Doe",
                 "email": "john@company.com",
                 "phone": "+27123456789",
-                "role": "staff",
+                "role": "owner",
                 "status": "pending",
-                "customer_name": "ABC Company"
-            },
-            "requires_approval": true
+                "customer_name": "ABC Company Ltd"
+            }
         }
     
-    Note: First user for a customer automatically becomes owner with approved status.
+    Note: All users are created with OWNER role and RESTRICTED permissions by default.
     """
     try:
         data = request.get_json()
@@ -77,41 +79,15 @@ def register():
                 'message': 'Request body is required'
             }), 400
         
-        # Validate email format
-        email = data.get('email', '').strip().lower()
-        if email:
-            import re
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            if not re.match(email_pattern, email):
-                return jsonify({
-                    'success': False,
-                    'message': 'Invalid email format',
-                    'error_code': 'INVALID_EMAIL'
-                }), 400
-        
-        # Validate phone format if provided
-        phone = data.get('phone', '').strip()
-        if phone:
-            import re
-            phone_pattern = r'^(\+27|0)[0-9]{9}$'
-            if not re.match(phone_pattern, phone):
-                return jsonify({
-                    'success': False,
-                    'message': 'Invalid phone format. Use +27XXXXXXXXX or 0XXXXXXXXX',
-                    'error_code': 'INVALID_PHONE'
-                }), 400
-        
-        # Call registration service
-        result = registration_service.register_customer_user(data)
+        # Call the unified auth service to create customer user
+        result = auth_service.create_customer_user(data)
         
         if result['success']:
             return jsonify(result), 201
         else:
             # Return appropriate status code based on error
             status_code = 400
-            if result.get('error_code') in ['INVALID_CUSTOMER_CODE', 'CUSTOMER_NOT_ACTIVE']:
-                status_code = 404
-            elif result.get('error_code') in ['EMAIL_EXISTS', 'PHONE_EXISTS']:
+            if result.get('error_code') in ['EMAIL_EXISTS', 'PHONE_EXISTS']:
                 status_code = 409
             
             return jsonify(result), status_code
@@ -124,40 +100,70 @@ def register():
             'error_code': 'INTERNAL_ERROR'
         }), 500
 
-@auth_bp.route('/check-email', methods=['POST'])
-def check_email():
+@auth_bp.route('/login', methods=['POST'])
+def login():
     """
-    Check if an email is available for registration.
+    Login with email and password.
     
     Request Body:
         {
-            "email": "john@company.com"
+            "email": "john@company.com",
+            "password": "securepassword123"
         }
     
     Response:
         {
-            "eligible": true,
-            "message": "Email is available for registration"
+            "success": true,
+            "message": "Authentication successful",
+            "session_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+            "user_type": "customer_user",
+            "user": {
+                "id": 1,
+                "name": "John Doe",
+                "email": "john@company.com",
+                "role": "owner",
+                "customer": {...},
+                "permissions": {...}
+            }
         }
     """
     try:
         data = request.get_json()
-        if not data or not data.get('email'):
+        if not data:
             return jsonify({
-                'eligible': False,
-                'reason': 'Email is required'
+                'success': False,
+                'message': 'Request body is required'
             }), 400
         
-        email = data.get('email', '').strip().lower()
-        result = registration_service.check_registration_eligibility(email)
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
         
-        return jsonify(result), 200 if result['eligible'] else 409
+        if not email or not password:
+            return jsonify({
+                'success': False,
+                'message': 'Email and password are required',
+                'error_code': 'MISSING_CREDENTIALS'
+            }), 400
         
+        # Authenticate with password
+        result = auth_service.authenticate_with_password(email, password)
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            # Return appropriate status code based on error
+            status_code = 401
+            if result.get('error_code') == 'AUTH_ERROR':
+                status_code = 500
+            
+            return jsonify(result), status_code
+            
     except Exception as e:
-        logging.error(f"Error checking email: {e}")
+        logging.error(f"Error in login endpoint: {e}")
         return jsonify({
-            'eligible': False,
-            'reason': 'Unable to check email availability'
+            'success': False,
+            'message': 'An internal error occurred',
+            'error_code': 'INTERNAL_ERROR'
         }), 500
 
 @auth_bp.route('/send-otp', methods=['POST'])
@@ -168,7 +174,9 @@ def send_otp():
     Now supports both CustomerUser and PlatformUser authentication.
     
     Request Body:
-        phone (str): User's phone number
+        {
+            "phone": "+27123456789"
+        }
     
     Returns:
         JSON: Success/error response with OTP status
@@ -201,7 +209,7 @@ def send_otp():
             status_code = 400
             if result.get('error_code') in ['USER_NOT_FOUND', 'USER_NOT_APPROVED', 'CUSTOMER_NOT_ACTIVE']:
                 status_code = 403
-            elif result.get('error_code') == 'DB_ERROR':
+            elif result.get('error_code') == 'INTERNAL_ERROR':
                 status_code = 500
             
             return jsonify(result), status_code
@@ -222,8 +230,10 @@ def verify_otp():
     Now returns enhanced payload with user_type and permissions.
     
     Request Body:
-        phone (str): User's phone number
-        otp (str): OTP code to verify
+        {
+            "phone": "+27123456789",
+            "otp": "123456"
+        }
     
     Returns:
         JSON: Authentication result with user data, session token, and user type
@@ -265,7 +275,7 @@ def verify_otp():
             status_code = 400
             if result.get('error_code') in ['USER_NOT_FOUND', 'TOO_MANY_ATTEMPTS']:
                 status_code = 403
-            elif result.get('error_code') == 'DB_ERROR':
+            elif result.get('error_code') == 'INTERNAL_ERROR':
                 status_code = 500
             
             return jsonify(result), status_code
@@ -284,7 +294,9 @@ def validate_session():
     Validate session token and get current user data.
     
     Request Body:
-        session_token (str): Session token to validate
+        {
+            "session_token": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+        }
     
     Returns:
         JSON: Validation result with user data and user type
@@ -326,7 +338,9 @@ def logout():
     Logout user and invalidate session.
     
     Request Body:
-        session_token (str): Session token to invalidate
+        {
+            "session_token": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+        }
     
     Returns:
         JSON: Logout confirmation

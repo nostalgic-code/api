@@ -158,7 +158,7 @@ def perform_user_action(user_id):
             "action": "approve",  // or "reject"
             "reason": "Invalid information",  // required for reject
             "depot_access": ["JHB", "CPT"],  // optional for approve
-            "custom_permissions": {...}  // optional for approve
+            "permission_code": "ADMIN"  // optional for approve, defaults based on role
         }
     
     Response:
@@ -213,7 +213,7 @@ def update_user(user_id):
     Request Body (all fields optional):
         {
             "role": "owner",
-            "permissions": {...},
+            "permission_code": "ADMIN",
             "depot_access": ["JHB", "CPT"]
         }
     
@@ -221,7 +221,7 @@ def update_user(user_id):
         {
             "success": true,
             "message": "User updated successfully",
-            "updated_fields": ["role", "permissions"],
+            "updated_fields": ["role", "permission_code", "permissions"],
             "user": {...}
         }
     """
