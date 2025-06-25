@@ -29,7 +29,7 @@ from application.models.customer_user import CustomerUser, CustomerUserStatus, C
 from application.models.platform_user import PlatformUser
 from application.models.permission_code import PermissionCode
 from application.models.depot import Depot
-from application.services.helpers import user_helpers
+from application.services.helpers import user_helpers, customer_helpers
 
 
 class AdminService:
@@ -254,83 +254,105 @@ class AdminService:
     
     ################################################################################ CUSTOMER MANAGEMENT METHODS ################################################################################
     
-    def get_all_customers(self, filter_by: Optional[Dict] = None) -> List[Dict]:
+    def get_customers(self, filters: Dict[str, Any], pagination: Dict[str, int]) -> Dict:
         """
-        Get all customers with optional filtering.
+        Get customers with comprehensive filtering and user statistics
         
         Args:
-            filter_by: Optional filters (status, type, search)
-            
+            filters: Dict containing:
+                - status: str or list (pending, approved, rejected, on_hold)
+                - type: str or list (standard, premium, enterprise)
+                - search: str (searches name, code, account_number)
+                - created_after: str (ISO date)
+                - created_before: str (ISO date)
+                - has_pending_users: bool
+                - sort: str (field to sort by, prefix with - for desc)
+            pagination: Dict containing:
+                - page: int (default 1)
+                - limit: int (default 20, max 100)
+                
         Returns:
-            List of customers with statistics
+            Dict containing:
+                - data: List of customer objects with user stats
+                - meta: Pagination and filter metadata
         """
         try:
             query = Customer.query
             
             # Apply filters
-            if filter_by:
-                if filter_by.get('status'):
-                    query = query.filter_by(status=CustomerStatus[filter_by['status'].upper()])
-                if filter_by.get('type'):
-                    query = query.filter_by(type=filter_by['type'])
-                if filter_by.get('search'):
-                    search = f"%{filter_by['search']}%"
-                    query = query.filter(
-                        or_(
-                            Customer.name.ilike(search),
-                            Customer.customer_code.ilike(search)
-                        )
-                    )
+            query = customer_helpers.apply_customer_filters(query, filters)
             
-            customers = query.order_by(Customer.name).all()
+            # Apply sorting
+            sort_field = filters.get('sort', '-created_at')
+            query = customer_helpers.apply_sorting(query, Customer, sort_field)
             
-            result = []
-            for customer in customers:
-                # Get user statistics
-                user_stats = db.session.query(
-                    CustomerUser.status, db.func.count(CustomerUser.id)
-                ).filter_by(customer_id=customer.id).group_by(CustomerUser.status).all()
-                
-                user_counts = {
-                    'total': sum(count for _, count in user_stats),
-                    'approved': 0,
-                    'pending': 0,
-                    'rejected': 0
+            # Get total count before pagination
+            total_count = query.count()
+            
+            # Apply pagination
+            page = pagination.get('page', 1)
+            limit = min(pagination.get('limit', 20), 100)
+            offset = (page - 1) * limit
+            
+            customers = query.offset(offset).limit(limit).all()
+            
+            # Format response with stats
+            result = {
+                'data': [customer_helpers.format_customer_response(customer) for customer in customers],
+                'meta': {
+                    'total': total_count,
+                    'page': page,
+                    'limit': limit,
+                    'pages': (total_count + limit - 1) // limit,
+                    'filters_applied': {k: v for k, v in filters.items() if v is not None}
                 }
-                
-                for status, count in user_stats:
-                    user_counts[status.value] = count
-                
-                result.append({
-                    'id': customer.id,
-                    'code': customer.customer_code,
-                    'account_number': customer.account_number,
-                    'name': customer.name,
-                    'type': customer.type.value,
-                    'status': customer.status.value,
-                    'users': user_counts,
-                    'created_at': customer.created_at.isoformat() if customer.created_at else None
-                })
+            }
             
+            self.logger.info(f"Found {total_count} customers with filters: {filters}")
             return result
             
         except Exception as e:
             self.logger.error(f"Error fetching customers: {str(e)}")
             raise
     
-    def update_customer_status(self, customer_id: int, new_status: str, 
-                              updated_by: int, reason: Optional[str] = None) -> Dict:
+    def get_customer_details(self, customer_id: int) -> Dict:
         """
-        Update customer status (approve, suspend, etc).
+        Get detailed customer information including all users, stats, and history
         
         Args:
-            customer_id: ID of customer to update
-            new_status: New status value
-            updated_by: ID of platform user making change
-            reason: Optional reason for status change
+            customer_id: ID of the customer
             
         Returns:
-            Result dictionary
+            Dict with comprehensive customer information
+        """
+        try:
+            customer = Customer.query.get(customer_id)
+            if not customer:
+                raise ValueError(f"Customer with ID {customer_id} not found")
+            
+            # Get detailed information
+            customer_data = customer_helpers.get_customer_details(customer)
+            
+            self.logger.info(f"Retrieved details for customer {customer.name}")
+            return customer_data
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching customer details for ID {customer_id}: {str(e)}")
+            raise
+    
+    def update_customer(self, customer_id: int, updates: Dict) -> Dict:
+        """
+        Update customer attributes (mainly status)
+        
+        Args:
+            customer_id: ID of the customer
+            updates: Dict containing fields to update:
+                - status: str (approved, on_hold, etc)
+                - updated_by: int (ID of platform user)
+                - reason: str (optional reason for status change)
+                
+        Returns:
+            Dict with updated customer information
         """
         try:
             customer = Customer.query.get(customer_id)
@@ -341,47 +363,238 @@ class AdminService:
                     'code': 'CUSTOMER_NOT_FOUND'
                 }
             
-            # Validate status
-            try:
-                new_status_enum = CustomerStatus[new_status.upper()]
-            except KeyError:
-                return {
-                    'success': False,
-                    'error': f'Invalid status: {new_status}',
-                    'code': 'INVALID_STATUS'
-                }
+            updated_fields = []
             
-            old_status = customer.status
-            customer.status = new_status_enum
+            # Update status if provided
+            if 'status' in updates:
+                # Validate status change
+                validation = customer_helpers.validate_customer_status_change(
+                    customer, updates['status']
+                )
+                if not validation['valid']:
+                    return {
+                        'success': False,
+                        'error': validation['error'],
+                        'code': 'INVALID_STATUS_CHANGE'
+                    }
+                
+                old_status = customer.status
+                new_status_enum = CustomerStatus[updates['status'].upper()]
+                customer.status = new_status_enum
+                updated_fields.append('status')
+                
+                # Log the status change
+                self.logger.info(
+                    f"Customer {customer.name} status changed from {old_status.value} "
+                    f"to {new_status_enum.value} by platform user {updates.get('updated_by')}. "
+                    f"Reason: {updates.get('reason', 'Not provided')}"
+                )
+                
+                # Handle side effects of status changes
+                if new_status_enum == CustomerStatus.ON_HOLD:
+                    # When putting customer on hold, could optionally deactivate all users
+                    # This is a business decision - implement if needed
+                    pass
+            
             customer.updated_at = datetime.utcnow()
-            
             db.session.commit()
-            
-            self.logger.info(
-                f"Customer {customer.name} status changed from {old_status.value} "
-                f"to {new_status} by platform user {updated_by}"
-            )
-            
-            # If suspending customer, optionally suspend all users
-            if new_status_enum == CustomerStatus.ON_HOLD:
-                # This will trigger the login validation to fail for all users
-                pass
             
             return {
                 'success': True,
-                'message': f'Customer status updated to {new_status}',
-                'customer': {
-                    'id': customer.id,
-                    'name': customer.name,
-                    'old_status': old_status.value,
-                    'new_status': new_status
-                }
+                'message': 'Customer updated successfully',
+                'updated_fields': updated_fields,
+                'customer': customer_helpers.format_customer_response(customer)
             }
             
         except Exception as e:
             db.session.rollback()
             self.logger.error(f"Error updating customer {customer_id}: {str(e)}")
             raise
+    
+    def get_customer_users(self, customer_id: int, filters: Dict) -> Dict:
+        """
+        Get all users for a specific customer with filtering
+        
+        Args:
+            customer_id: ID of the customer
+            filters: Dict containing user filters and pagination
+            
+        Returns:
+            Dict with filtered user list for the customer
+        """
+        try:
+            # Verify customer exists
+            customer = Customer.query.get(customer_id)
+            if not customer:
+                raise ValueError(f"Customer with ID {customer_id} not found")
+            
+            # Add customer_id to filters
+            filters['customer_id'] = customer_id
+            
+            # Use existing get_users method with customer filter
+            pagination = {
+                'page': filters.pop('page', 1),
+                'limit': filters.pop('limit', 20)
+            }
+            
+            result = self.get_users(filters, pagination)
+            
+            # Add customer info to response
+            result['customer'] = {
+                'id': customer.id,
+                'name': customer.name,
+                'code': customer.customer_code,
+                'status': customer.status.value
+            }
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching users for customer {customer_id}: {str(e)}")
+            raise
+    
+
+    ################################################################################  DASHBOARD METHODS ################################################################################
+    
+    def get_recent_activity(self, limit: int = 10) -> List[Dict]:
+        """
+        Get recent admin activity for dashboard.
+        
+        Args:
+            limit: Number of recent activities to return
+            
+        Returns:
+            List of recent admin activities
+        """
+        try:
+            # For now, we'll get recent user approvals/rejections and customer status changes
+            # This is a simplified version - in production you'd have a dedicated audit log table
+            
+            activities = []
+            
+            # Get recently approved users
+            recent_approved = CustomerUser.query.filter_by(
+                status=CustomerUserStatus.APPROVED
+            ).order_by(CustomerUser.updated_at.desc()).limit(5).all()
+            
+            for user in recent_approved:
+                if user.updated_at:
+                    activities.append({
+                        'id': f"user_approved_{user.id}",
+                        'type': 'user_approved',
+                        'message': f"User {user.email} was approved",
+                        'timestamp': user.updated_at.isoformat(),
+                        'user_email': user.email,
+                        'customer_name': user.customer.name if user.customer else None
+                    })
+            
+            # Get recently rejected users
+            recent_rejected = CustomerUser.query.filter_by(
+                status=CustomerUserStatus.REJECTED
+            ).order_by(CustomerUser.updated_at.desc()).limit(5).all()
+            
+            for user in recent_rejected:
+                if user.updated_at:
+                    activities.append({
+                        'id': f"user_rejected_{user.id}",
+                        'type': 'user_rejected',
+                        'message': f"User {user.email} was rejected",
+                        'timestamp': user.updated_at.isoformat(),
+                        'user_email': user.email,
+                        'customer_name': user.customer.name if user.customer else None
+                    })
+            
+            # Get recently updated customers
+            recent_customers = Customer.query.order_by(
+                Customer.updated_at.desc()
+            ).limit(3).all()
+            
+            for customer in recent_customers:
+                if customer.updated_at and customer.updated_at != customer.created_at:
+                    activities.append({
+                        'id': f"customer_updated_{customer.id}",
+                        'type': 'customer_updated',
+                        'message': f"Customer {customer.name} status was updated",
+                        'timestamp': customer.updated_at.isoformat(),
+                        'customer_name': customer.name,
+                        'customer_status': customer.status.value
+                    })
+            
+            # Sort by timestamp and limit
+            activities.sort(key=lambda x: x['timestamp'], reverse=True)
+            return activities[:limit]
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching recent activity: {str(e)}")
+            return []
+    
+    def get_system_stats(self) -> Dict:
+        """
+        Get system-wide statistics for dashboard.
+        
+        Returns:
+            Dictionary of system statistics
+        """
+        try:
+            stats = {
+                'customers': {
+                    'total': Customer.query.count(),
+                    'approved': Customer.query.filter_by(status=CustomerStatus.APPROVED).count(),
+                    'pending': Customer.query.filter_by(status=CustomerStatus.PENDING).count(),
+                    'suspended': Customer.query.filter_by(status=CustomerStatus.ON_HOLD).count()
+                },
+                'users': {
+                    'customer_users': {
+                        'total': CustomerUser.query.count(),
+                        'approved': CustomerUser.query.filter_by(status=CustomerUserStatus.APPROVED).count(),
+                        'pending': CustomerUser.query.filter_by(status=CustomerUserStatus.PENDING).count(),
+                        'rejected': CustomerUser.query.filter_by(status=CustomerUserStatus.REJECTED).count()
+                    },
+                    'platform_users': {
+                        'total': PlatformUser.query.count(),
+                        'admins': PlatformUser.query.filter_by(role='admin').count()
+                    }
+                },
+                'depots': {
+                    'total': Depot.query.count()
+                },
+                'permission_codes': {
+                    'total': PermissionCode.query.count()
+                }
+            }
+            
+            return stats
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching system stats: {str(e)}")
+            raise
+
+    ################################################################################  DEPRECATED METHODS ################################################################################
+    
+    # Keep existing get_all_customers method for backward compatibility
+    # Mark as deprecated in documentation
+    def get_all_customers(self, filter_by: Optional[Dict] = None) -> List[Dict]:
+        """
+        DEPRECATED: Use get_customers() instead.
+        Get all customers with optional filtering.
+        """
+        filters = filter_by or {}
+        pagination = {'page': 1, 'limit': 1000}  # Get all
+        result = self.get_customers(filters, pagination)
+        return result['data']
+    
+    # Keep existing update_customer_status for backward compatibility
+    def update_customer_status(self, customer_id: int, new_status: str, 
+                              updated_by: int, reason: Optional[str] = None) -> Dict:
+        """
+        DEPRECATED: Use update_customer() instead.
+        Update customer status.
+        """
+        return self.update_customer(customer_id, {
+            'status': new_status,
+            'updated_by': updated_by,
+            'reason': reason
+        })
     
     # Role and Permission Management
     
@@ -498,121 +711,5 @@ class AdminService:
             self.logger.error(f"Error updating permissions for user {user_id}: {str(e)}")
             raise
     
-    ################################################################################  DASHBOARD METHODS ################################################################################
-    
-    def get_recent_activity(self, limit: int = 10) -> List[Dict]:
-        """
-        Get recent admin activity for dashboard.
-        
-        Args:
-            limit: Number of recent activities to return
-            
-        Returns:
-            List of recent admin activities
-        """
-        try:
-            # For now, we'll get recent user approvals/rejections and customer status changes
-            # This is a simplified version - in production you'd have a dedicated audit log table
-            
-            activities = []
-            
-            # Get recently approved users
-            recent_approved = CustomerUser.query.filter_by(
-                status=CustomerUserStatus.APPROVED
-            ).order_by(CustomerUser.updated_at.desc()).limit(5).all()
-            
-            for user in recent_approved:
-                if user.updated_at:
-                    activities.append({
-                        'id': f"user_approved_{user.id}",
-                        'type': 'user_approved',
-                        'message': f"User {user.email} was approved",
-                        'timestamp': user.updated_at.isoformat(),
-                        'user_email': user.email,
-                        'customer_name': user.customer.name if user.customer else None
-                    })
-            
-            # Get recently rejected users
-            recent_rejected = CustomerUser.query.filter_by(
-                status=CustomerUserStatus.REJECTED
-            ).order_by(CustomerUser.updated_at.desc()).limit(5).all()
-            
-            for user in recent_rejected:
-                if user.updated_at:
-                    activities.append({
-                        'id': f"user_rejected_{user.id}",
-                        'type': 'user_rejected',
-                        'message': f"User {user.email} was rejected",
-                        'timestamp': user.updated_at.isoformat(),
-                        'user_email': user.email,
-                        'customer_name': user.customer.name if user.customer else None
-                    })
-            
-            # Get recently updated customers
-            recent_customers = Customer.query.order_by(
-                Customer.updated_at.desc()
-            ).limit(3).all()
-            
-            for customer in recent_customers:
-                if customer.updated_at and customer.updated_at != customer.created_at:
-                    activities.append({
-                        'id': f"customer_updated_{customer.id}",
-                        'type': 'customer_updated',
-                        'message': f"Customer {customer.name} status was updated",
-                        'timestamp': customer.updated_at.isoformat(),
-                        'customer_name': customer.name,
-                        'customer_status': customer.status.value
-                    })
-            
-            # Sort by timestamp and limit
-            activities.sort(key=lambda x: x['timestamp'], reverse=True)
-            return activities[:limit]
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching recent activity: {str(e)}")
-            return []
-    
-    def get_system_stats(self) -> Dict:
-        """
-        Get system-wide statistics for dashboard.
-        
-        Returns:
-            Dictionary of system statistics
-        """
-        try:
-            stats = {
-                'customers': {
-                    'total': Customer.query.count(),
-                    'approved': Customer.query.filter_by(status=CustomerStatus.APPROVED).count(),
-                    'pending': Customer.query.filter_by(status=CustomerStatus.PENDING).count(),
-                    'suspended': Customer.query.filter_by(status=CustomerStatus.ON_HOLD).count()
-                },
-                'users': {
-                    'customer_users': {
-                        'total': CustomerUser.query.count(),
-                        'approved': CustomerUser.query.filter_by(status=CustomerUserStatus.APPROVED).count(),
-                        'pending': CustomerUser.query.filter_by(status=CustomerUserStatus.PENDING).count(),
-                        'rejected': CustomerUser.query.filter_by(status=CustomerUserStatus.REJECTED).count()
-                    },
-                    'platform_users': {
-                        'total': PlatformUser.query.count(),
-                        'admins': PlatformUser.query.filter_by(role='admin').count()
-                    }
-                },
-                'depots': {
-                    'total': Depot.query.count()
-                },
-                'permission_codes': {
-                    'total': PermissionCode.query.count()
-                }
-            }
-            
-            return stats
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching system stats: {str(e)}")
-            raise
-
-
 # Create singleton instance
 admin_service = AdminService()

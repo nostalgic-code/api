@@ -264,100 +264,200 @@ def update_user(user_id):
 
 
 # Customer Management Endpoints
-
 @admin_bp.route('/customers', methods=['GET'])
 @token_required
 @platform_user_required
 def get_customers():
     """
-    Get all customers with statistics.
+    Get all customers with comprehensive filtering and pagination.
     
     Query Parameters:
-        - status: Filter by status (approved, pending, suspended)
-        - type: Filter by customer type
-        - search: Search by name or code
+        - status: Filter by status (comma-separated for multiple: pending,approved,on_hold)
+        - type: Filter by type (comma-separated for multiple: standard,premium)
+        - search: Search by name, code, or account number
+        - created_after: ISO date string
+        - created_before: ISO date string
+        - has_pending_users: Filter customers with pending users (true/false)
+        - sort: Sort field (prefix with - for desc: -created_at)
+        - page: Page number (default: 1)
+        - limit: Items per page (default: 20, max: 100)
     
     Response:
         {
-            "customers": [
+            "data": [
                 {
                     "id": 1,
                     "code": "CUST001",
                     "name": "ABC Company",
                     "status": "approved",
-                    "users": {
-                        "total": 5,
-                        "approved": 3,
-                        "pending": 2
-                    }
+                    "type": "enterprise",
+                    "user_stats": {
+                        "total": 10,
+                        "approved": 7,
+                        "pending": 2,
+                        "rejected": 1
+                    },
+                    "created_at": "2025-06-01T..."
                 }
             ],
-            "count": 1
+            "meta": {
+                "total": 50,
+                "page": 1,
+                "limit": 20,
+                "pages": 3,
+                "filters_applied": {...}
+            }
         }
     """
     try:
+        # Parse filters
         filters = {}
+        
+        # Handle multi-value parameters
         if request.args.get('status'):
-            filters['status'] = request.args.get('status')
+            statuses = request.args.get('status').split(',')
+            filters['status'] = statuses if len(statuses) > 1 else statuses[0]
+        
         if request.args.get('type'):
-            filters['type'] = request.args.get('type')
+            types = request.args.get('type').split(',')
+            filters['type'] = types if len(types) > 1 else types[0]
+        
+        # Single value parameters
         if request.args.get('search'):
             filters['search'] = request.args.get('search')
         
-        customers = admin_service.get_all_customers(filter_by=filters)
+        if request.args.get('created_after'):
+            filters['created_after'] = request.args.get('created_after')
         
+        if request.args.get('created_before'):
+            filters['created_before'] = request.args.get('created_before')
+        
+        if request.args.get('has_pending_users'):
+            filters['has_pending_users'] = request.args.get('has_pending_users')
+        
+        if request.args.get('sort'):
+            filters['sort'] = request.args.get('sort')
+        
+        # Parse pagination
+        pagination = {
+            'page': int(request.args.get('page', 1)),
+            'limit': int(request.args.get('limit', 20))
+        }
+        
+        result = admin_service.get_customers(filters=filters, pagination=pagination)
+        
+        return jsonify(result), 200
+        
+    except ValueError as e:
         return jsonify({
-            'customers': customers,
-            'count': len(customers)
-        })
-        
+            'error': str(e),
+            'code': 'INVALID_PARAMETER'
+        }), 400
     except Exception as e:
-        logger.error(f"Error fetching customers: {str(e)}")
+        logger.error(f"Error in get_customers: {str(e)}")
         return jsonify({
             'error': 'Failed to fetch customers',
             'code': 'FETCH_ERROR'
         }), 500
 
 
-@admin_bp.route('/customers/<int:customer_id>/status', methods=['PUT'])
+@admin_bp.route('/customers/<int:customer_id>', methods=['GET'])
 @token_required
 @platform_user_required
-def update_customer_status(customer_id):
+def get_customer_details(customer_id):
     """
-    Update customer status.
+    Get detailed information for a specific customer.
+    
+    Response:
+        {
+            "id": 1,
+            "code": "CUST001",
+            "name": "ABC Company",
+            "status": "approved",
+            "type": "enterprise",
+            "user_stats": {...},
+            "details": {
+                "user_breakdown": {
+                    "owner": {"total": 1, "approved": 1, ...},
+                    "staff": {"total": 5, "approved": 4, ...}
+                },
+                "depot_coverage": [
+                    {"code": "JHB", "name": "Johannesburg", "user_count": 3}
+                ],
+                "recent_activity": [...],
+                "owner_info": {
+                    "id": 1,
+                    "name": "John Doe",
+                    "email": "john@abc.com"
+                }
+            }
+        }
+    """
+    try:
+        customer_details = admin_service.get_customer_details(customer_id)
+        return jsonify(customer_details), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'error': str(e),
+            'code': 'CUSTOMER_NOT_FOUND'
+        }), 404
+    except Exception as e:
+        logger.error(f"Error fetching customer details for ID {customer_id}: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch customer details',
+            'code': 'FETCH_ERROR'
+        }), 500
+
+
+@admin_bp.route('/customers/<int:customer_id>', methods=['PATCH'])
+@token_required
+@platform_user_required
+def update_customer(customer_id):
+    """
+    Update customer attributes.
     
     Request Body:
         {
-            "status": "suspended",
+            "status": "on_hold",
             "reason": "Non-payment"  // optional
         }
     
     Response:
         {
             "success": true,
-            "message": "Customer status updated to suspended",
+            "message": "Customer updated successfully",
+            "updated_fields": ["status"],
             "customer": {
                 "id": 1,
+                "code": "CUST001",
                 "name": "ABC Company",
-                "old_status": "approved",
-                "new_status": "suspended"
+                "status": "on_hold",
+                ...
             }
         }
     """
     try:
         data = request.get_json()
-        if not data or not data.get('status'):
+        if not data:
             return jsonify({
-                'success': False,
-                'error': 'Status is required',
-                'code': 'STATUS_REQUIRED'
+                'error': 'No update data provided',
+                'code': 'NO_DATA'
             }), 400
         
-        result = admin_service.update_customer_status(
+        # Build updates dict
+        updates = {
+            'updated_by': g.current_user.id
+        }
+        
+        if 'status' in data:
+            updates['status'] = data['status']
+        if 'reason' in data:
+            updates['reason'] = data['reason']
+        
+        result = admin_service.update_customer(
             customer_id=customer_id,
-            new_status=data['status'],
-            updated_by=g.current_user.id,
-            reason=data.get('reason')
+            updates=updates
         )
         
         if result['success']:
@@ -368,11 +468,82 @@ def update_customer_status(customer_id):
     except Exception as e:
         logger.error(f"Error updating customer {customer_id}: {str(e)}")
         return jsonify({
-            'success': False,
             'error': 'Failed to update customer',
             'code': 'UPDATE_ERROR'
         }), 500
 
+
+@admin_bp.route('/customers/<int:customer_id>/users', methods=['GET'])
+@token_required
+@platform_user_required
+def get_customer_users(customer_id):
+    """
+    Get all users for a specific customer with filtering.
+    
+    Query Parameters:
+        - status: Filter by user status (pending,approved,rejected)
+        - role: Filter by user role (owner,staff,viewer)
+        - search: Search by name or email
+        - sort: Sort field (prefix with - for desc)
+        - page: Page number (default: 1)
+        - limit: Items per page (default: 20)
+    
+    Response:
+        {
+            "data": [...user list...],
+            "meta": {
+                "total": 10,
+                "page": 1,
+                "limit": 20,
+                "pages": 1,
+                "filters_applied": {...}
+            },
+            "customer": {
+                "id": 1,
+                "name": "ABC Company",
+                "code": "CUST001",
+                "status": "approved"
+            }
+        }
+    """
+    try:
+        # Parse filters
+        filters = {}
+        
+        if request.args.get('status'):
+            filters['status'] = request.args.get('status')
+        
+        if request.args.get('role'):
+            filters['role'] = request.args.get('role')
+        
+        if request.args.get('search'):
+            filters['search'] = request.args.get('search')
+        
+        if request.args.get('sort'):
+            filters['sort'] = request.args.get('sort')
+        
+        # Add pagination to filters (will be extracted in service)
+        filters['page'] = int(request.args.get('page', 1))
+        filters['limit'] = int(request.args.get('limit', 20))
+        
+        result = admin_service.get_customer_users(
+            customer_id=customer_id,
+            filters=filters
+        )
+        
+        return jsonify(result), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'error': str(e),
+            'code': 'CUSTOMER_NOT_FOUND'
+        }), 404
+    except Exception as e:
+        logger.error(f"Error fetching users for customer {customer_id}: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch customer users',
+            'code': 'FETCH_ERROR'
+        }), 500
 
 # Role and Permission Management
 
