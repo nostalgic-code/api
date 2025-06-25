@@ -25,223 +25,169 @@ from application.services.admin_service import admin_service
 admin_bp = Blueprint('admin', __name__)
 logger = logging.getLogger(__name__)
 
-
-# User Management Endpoints
-
-@admin_bp.route('/pending-users', methods=['GET'])
+@admin_bp.route('/users', methods=['GET'])
 @token_required
 @platform_user_required
-def get_pending_users():
+def get_users():
     """
-    Get all pending customer users.
+    Get all users with comprehensive filtering and pagination.
     
     Query Parameters:
-        - customer_id: Filter by customer
-        - role: Filter by role (owner, staff, viewer)
-        - created_after: ISO date string
+        - status: Filter by status (comma-separated for multiple: pending,approved)
+        - customer_id: Filter by customer (comma-separated for multiple)
+        - role: Filter by role (comma-separated for multiple: owner,staff)
         - search: Search by name or email
+        - created_after: ISO date string
+        - created_before: ISO date string
+        - sort: Sort field (prefix with - for desc: -created_at)
+        - page: Page number (default: 1)
+        - limit: Items per page (default: 20, max: 100)
     
     Response:
         {
-            "users": [...],
-            "count": 1
+            "data": [...],
+            "meta": {
+                "total": 100,
+                "page": 1,
+                "limit": 20,
+                "pages": 5,
+                "filters_applied": {...}
+            }
         }
     """
     try:
-        # Parse filters from query params
+        # Parse filters
         filters = {}
+        
+        # Handle multi-value parameters
+        if request.args.get('status'):
+            statuses = request.args.get('status').split(',')
+            filters['status'] = statuses if len(statuses) > 1 else statuses[0]
+        
         if request.args.get('customer_id'):
-            filters['customer_id'] = int(request.args.get('customer_id'))
+            customer_ids = request.args.get('customer_id').split(',')
+            filters['customer_id'] = [int(id) for id in customer_ids]
+        
         if request.args.get('role'):
-            filters['role'] = request.args.get('role')
+            roles = request.args.get('role').split(',')
+            filters['role'] = roles if len(roles) > 1 else roles[0]
+        
+        # Single value parameters
+        if request.args.get('search'):
+            filters['search'] = request.args.get('search')
+        
         if request.args.get('created_after'):
             filters['created_after'] = request.args.get('created_after')
-        if request.args.get('search'):
-            filters['search'] = request.args.get('search')
         
-        pending_users = admin_service.get_users_by_status('pending', filter_by=filters)
+        if request.args.get('created_before'):
+            filters['created_before'] = request.args.get('created_before')
         
+        if request.args.get('sort'):
+            filters['sort'] = request.args.get('sort')
+        
+        # Parse pagination
+        pagination = {
+            'page': int(request.args.get('page', 1)),
+            'limit': int(request.args.get('limit', 20))
+        }
+        
+        result = admin_service.get_users(filters=filters, pagination=pagination)
+        
+        return jsonify(result), 200
+        
+    except ValueError as e:
         return jsonify({
-            'users': pending_users,
-            'count': len(pending_users)
-        })
-        
+            'error': str(e),
+            'code': 'INVALID_PARAMETER'
+        }), 400
     except Exception as e:
-        logger.error(f"Error in get_pending_users: {str(e)}")
+        logger.error(f"Error in get_users: {str(e)}")
         return jsonify({
-            'error': 'Failed to fetch pending users',
+            'error': 'Failed to fetch users',
             'code': 'FETCH_ERROR'
         }), 500
 
 
-@admin_bp.route('/active-users', methods=['GET'])
+@admin_bp.route('/users/<int:user_id>', methods=['GET'])
 @token_required
 @platform_user_required
-def get_active_users():
+def get_user_details(user_id):
     """
-    Get all active (approved) customer users.
-    
-    Query Parameters:
-        - customer_id: Filter by customer
-        - role: Filter by role (owner, staff, viewer)
-        - search: Search by name or email
+    Get detailed information for a specific user.
     
     Response:
         {
-            "users": [...],
-            "count": 1
+            "id": 1,
+            "name": "John Doe",
+            "email": "john@company.com",
+            ...standard user fields...,
+            "details": {
+                "permission_code_details": {...},
+                "depot_names": [...],
+                "activity_summary": {...},
+                "approval_info": {...}
+            }
         }
     """
     try:
-        # Parse filters from query params
-        filters = {}
-        if request.args.get('customer_id'):
-            filters['customer_id'] = int(request.args.get('customer_id'))
-        if request.args.get('role'):
-            filters['role'] = request.args.get('role')
-        if request.args.get('search'):
-            filters['search'] = request.args.get('search')
+        user_details = admin_service.get_user_details(user_id)
+        return jsonify(user_details), 200
         
-        active_users = admin_service.get_users_by_status('approved', filter_by=filters)
-        
+    except ValueError as e:
         return jsonify({
-            'users': active_users,
-            'count': len(active_users)
-        })
-        
+            'error': str(e),
+            'code': 'USER_NOT_FOUND'
+        }), 404
     except Exception as e:
-        logger.error(f"Error in get_active_users: {str(e)}")
+        logger.error(f"Error fetching user details for ID {user_id}: {str(e)}")
         return jsonify({
-            'error': 'Failed to fetch active users',
+            'error': 'Failed to fetch user details',
             'code': 'FETCH_ERROR'
         }), 500
 
 
-@admin_bp.route('/rejected-users', methods=['GET'])
+@admin_bp.route('/users/<int:user_id>/actions', methods=['POST'])
 @token_required
 @platform_user_required
-def get_rejected_users():
+def perform_user_action(user_id):
     """
-    Get all rejected customer users.
-    
-    Query Parameters:
-        - customer_id: Filter by customer
-        - role: Filter by role (owner, staff, viewer)
-        - search: Search by name or email
-    
-    Response:
-        {
-            "users": [...],
-            "count": 1
-        }
-    """
-    try:
-        # Parse filters from query params
-        filters = {}
-        if request.args.get('customer_id'):
-            filters['customer_id'] = int(request.args.get('customer_id'))
-        if request.args.get('role'):
-            filters['role'] = request.args.get('role')
-        if request.args.get('search'):
-            filters['search'] = request.args.get('search')
-        
-        rejected_users = admin_service.get_users_by_status('rejected', filter_by=filters)
-        
-        return jsonify({
-            'users': rejected_users,
-            'count': len(rejected_users)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in get_rejected_users: {str(e)}")
-        return jsonify({
-            'error': 'Failed to fetch rejected users',
-            'code': 'FETCH_ERROR'
-        }), 500
-
-
-@admin_bp.route('/users/<int:user_id>/approve', methods=['POST'])
-@token_required
-@platform_user_required
-def approve_user(user_id):
-    """
-    Approve a pending customer user.
+    Perform an action on a user (approve/reject).
     
     Request Body:
         {
-            "depot_access": ["JHB", "CPT"],  // optional
-            "custom_permissions": {           // optional
-                "orders": {"create": true, "delete": false}
-            }
+            "action": "approve",  // or "reject"
+            "reason": "Invalid information",  // required for reject
+            "depot_access": ["JHB", "CPT"],  // optional for approve
+            "custom_permissions": {...}  // optional for approve
         }
     
     Response:
         {
             "success": true,
-            "message": "User john@company.com approved successfully",
-            "user": {
-                "id": 1,
-                "email": "john@company.com",
-                "status": "approved"
-            }
-        }
-    """
-    try:
-        data = request.get_json() or {}
-        
-        result = admin_service.approve_user(
-            user_id=user_id,
-            approved_by=g.current_user.id,
-            depot_access=data.get('depot_access'),
-            custom_permissions=data.get('custom_permissions')
-        )
-        
-        if result['success']:
-            return jsonify(result), 200
-        else:
-            return jsonify(result), 400
-            
-    except Exception as e:
-        logger.error(f"Error approving user {user_id}: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to approve user',
-            'code': 'APPROVAL_ERROR'
-        }), 500
-
-
-@admin_bp.route('/users/<int:user_id>/reject', methods=['POST'])
-@token_required
-@platform_user_required
-def reject_user(user_id):
-    """
-    Reject a pending customer user.
-    
-    Request Body:
-        {
-            "reason": "Invalid company information"
-        }
-    
-    Response:
-        {
-            "success": true,
-            "message": "User john@company.com rejected",
-            "reason": "Invalid company information"
+            "message": "User approved successfully",
+            "user": {...}
         }
     """
     try:
         data = request.get_json()
-        if not data or not data.get('reason'):
+        if not data or not data.get('action'):
             return jsonify({
-                'success': False,
-                'error': 'Rejection reason is required',
-                'code': 'REASON_REQUIRED'
+                'error': 'Action is required',
+                'code': 'ACTION_REQUIRED'
             }), 400
         
-        result = admin_service.reject_user(
+        action = data['action']
+        context = {
+            'actor_id': g.current_user.id,
+            'reason': data.get('reason'),
+            'depot_access': data.get('depot_access'),
+            'custom_permissions': data.get('custom_permissions')
+        }
+        
+        result = admin_service.perform_user_action(
             user_id=user_id,
-            rejected_by=g.current_user.id,
-            reason=data['reason']
+            action=action,
+            context=context
         )
         
         if result['success']:
@@ -250,11 +196,70 @@ def reject_user(user_id):
             return jsonify(result), 400
             
     except Exception as e:
-        logger.error(f"Error rejecting user {user_id}: {str(e)}")
+        logger.error(f"Error performing action on user {user_id}: {str(e)}")
         return jsonify({
-            'success': False,
-            'error': 'Failed to reject user',
-            'code': 'REJECTION_ERROR'
+            'error': 'Failed to perform action',
+            'code': 'ACTION_ERROR'
+        }), 500
+
+
+@admin_bp.route('/users/<int:user_id>', methods=['PATCH'])
+@token_required
+@platform_user_required
+def update_user(user_id):
+    """
+    Update user attributes.
+    
+    Request Body (all fields optional):
+        {
+            "role": "owner",
+            "permissions": {...},
+            "depot_access": ["JHB", "CPT"]
+        }
+    
+    Response:
+        {
+            "success": true,
+            "message": "User updated successfully",
+            "updated_fields": ["role", "permissions"],
+            "user": {...}
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'error': 'No update data provided',
+                'code': 'NO_DATA'
+            }), 400
+        
+        # Build updates dict with only provided fields
+        updates = {
+            'updated_by': g.current_user.id
+        }
+        
+        if 'role' in data:
+            updates['role'] = data['role']
+        if 'permissions' in data:
+            updates['permissions'] = data['permissions']
+        if 'depot_access' in data:
+            updates['depot_access'] = data['depot_access']
+        
+        result = admin_service.update_user(
+            user_id=user_id,
+            updates=updates
+        )
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        logger.error(f"Error updating user {user_id}: {str(e)}")
+        return jsonify({
+            'error': 'Failed to update user',
+            'code': 'UPDATE_ERROR'
         }), 500
 
 

@@ -18,7 +18,8 @@ Version: 1.0
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+from sqlalchemy.orm import Query
 from datetime import datetime
 from sqlalchemy import or_
 
@@ -35,98 +36,122 @@ class AdminService:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+
+    # User Management Methods - Refactored
     
-    # User Management Methods
-    
-    def get_users_by_status(self, status: str, filter_by: Optional[Dict] = None) -> List[Dict]:
+    def get_users(self, filters: Dict[str, Any], pagination: Dict[str, int]) -> Dict:
         """
-        Get users by status with optional filtering.
+        Unified method to get users with comprehensive filtering
         
         Args:
-            status: User status (pending, approved, rejected)
-            filter_by: Optional filters (customer_id, role, search, date_range)
-            
+            filters: Dict containing:
+                - status: str or list (pending, approved, rejected)
+                - customer_id: int or list
+                - role: str or list (owner, staff, viewer)
+                - search: str (searches name, email)
+                - created_after: datetime
+                - created_before: datetime
+                - sort: str (field to sort by, prefix with - for desc)
+            pagination: Dict containing:
+                - page: int (default 1)
+                - limit: int (default 20, max 100)
+                
         Returns:
-            List of users with customer information
+            Dict containing:
+                - data: List of user objects
+                - meta: Pagination and filter metadata
         """
         try:
-            # Map status string to enum
-            if status == 'pending':
-                status_enum = CustomerUserStatus.PENDING
-            elif status == 'approved':
-                status_enum = CustomerUserStatus.APPROVED
-            elif status == 'rejected':
-                status_enum = CustomerUserStatus.REJECTED
-            else:
-                raise ValueError(f"Invalid status: {status}")
+            query = CustomerUser.query
             
-            query = CustomerUser.query.filter_by(status=status_enum)
+            # Apply filters
+            query = self._apply_user_filters(query, filters)
             
-            # Apply optional filters
-            if filter_by:
-                if filter_by.get('customer_id'):
-                    query = query.filter_by(customer_id=filter_by['customer_id'])
-                if filter_by.get('role'):
-                    query = query.filter_by(role=CustomerUserRole[filter_by['role'].upper()])
-                if filter_by.get('created_after'):
-                    query = query.filter(CustomerUser.created_at >= filter_by['created_after'])
-                if filter_by.get('search'):
-                    search = f"%{filter_by['search']}%"
-                    query = query.filter(
-                        or_(
-                            CustomerUser.name.ilike(search),
-                            CustomerUser.email.ilike(search)
-                        )
-                    )
+            # Apply sorting
+            sort_field = filters.get('sort', '-created_at')
+            query = self._apply_sorting(query, CustomerUser, sort_field)
             
-            users = query.order_by(CustomerUser.created_at.desc()).all()
+            # Get total count before pagination
+            total_count = query.count()
             
-            result = []
-            for user in users:
-                result.append({
-                    'id': user.id,
-                    'name': user.name,
-                    'email': user.email,
-                    'phone': user.phone,
-                    'role': user.role.value,
-                    'status': user.status.value,
-                    'customer': {
-                        'id': user.customer.id,
-                        'name': user.customer.name,
-                        'code': user.customer.customer_code,
-                        'status': user.customer.status.value
-                    },
-                    'created_at': user.created_at.isoformat() if user.created_at else None,
-                    'updated_at': user.updated_at.isoformat() if user.updated_at else None,
-                    'last_login': user.last_login.isoformat() if user.last_login else None,
-                    'days_pending': (datetime.utcnow() - user.created_at).days if user.created_at and status == 'pending' else None,
-                    'depot_access': user.depot_access,
-                    'permissions': user.permissions
-                })
+            # Apply pagination
+            page = pagination.get('page', 1)
+            limit = min(pagination.get('limit', 20), 100)  # Cap at 100
+            offset = (page - 1) * limit
             
-            self.logger.info(f"Found {len(result)} {status} users")
+            users = query.offset(offset).limit(limit).all()
+            
+            # Format response
+            result = {
+                'data': [self._format_user_response(user) for user in users],
+                'meta': {
+                    'total': total_count,
+                    'page': page,
+                    'limit': limit,
+                    'pages': (total_count + limit - 1) // limit,
+                    'filters_applied': {k: v for k, v in filters.items() if v is not None}
+                }
+            }
+            
+            self.logger.info(f"Found {total_count} users with filters: {filters}")
             return result
             
         except Exception as e:
-            self.logger.error(f"Error fetching {status} users: {str(e)}")
+            self.logger.error(f"Error fetching users: {str(e)}")
             raise
     
-    def approve_user(self, user_id: int, approved_by: int, 
-                    depot_access: Optional[List[str]] = None,
-                    custom_permissions: Optional[Dict] = None) -> Dict:
+    def get_user_details(self, user_id: int) -> Dict:
         """
-        Approve a pending customer user.
+        Get detailed user information including permissions, depot access, activity history
         
         Args:
-            user_id: ID of user to approve
-            approved_by: ID of platform user approving
-            depot_access: Optional list of depot codes to assign
-            custom_permissions: Optional custom permissions to set
+            user_id: ID of the user
             
         Returns:
-            Result dictionary with success status
+            Dict with comprehensive user information
         """
         try:
+            user = CustomerUser.query.get(user_id)
+            if not user:
+                raise ValueError(f"User with ID {user_id} not found")
+            
+            # Get basic user info
+            user_data = self._format_user_response(user)
+            
+            # Add detailed information
+            user_data['details'] = {
+                'permission_code_details': self._get_permission_code_details(user.permission_code) if user.permission_code else None,
+                'depot_names': self._get_depot_names(user.depot_access) if user.depot_access else [],
+                'activity_summary': self._get_user_activity_summary(user_id),
+                'approval_info': self._get_approval_info(user) if user.status != CustomerUserStatus.PENDING else None
+            }
+            
+            return user_data
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching user details for ID {user_id}: {str(e)}")
+            raise
+    
+    def perform_user_action(self, user_id: int, action: str, context: Dict) -> Dict:
+        """
+        Handle approve/reject actions with context
+        
+        Args:
+            user_id: ID of the user
+            action: 'approve' or 'reject'
+            context: Dict containing:
+                - actor_id: ID of platform user performing action
+                - reason: str (required for reject)
+                - depot_access: list (optional for approve)
+                - custom_permissions: dict (optional for approve)
+                
+        Returns:
+            Dict with action result
+        """
+        try:
+            if action not in ['approve', 'reject']:
+                raise ValueError(f"Invalid action: {action}")
+            
             user = CustomerUser.query.get(user_id)
             if not user:
                 return {
@@ -142,107 +167,324 @@ class AdminService:
                     'code': 'INVALID_STATUS'
                 }
             
-            # Validate depot access if provided
-            if depot_access:
-                valid_depots = {d.code for d in Depot.query.all()}
-                invalid_depots = set(depot_access) - valid_depots
-                if invalid_depots:
+            if action == 'approve':
+                return self._approve_user_action(user, context)
+            else:
+                return self._reject_user_action(user, context)
+                
+        except Exception as e:
+            db.session.rollback()
+            self.logger.error(f"Error performing {action} on user {user_id}: {str(e)}")
+            raise
+    
+    def update_user(self, user_id: int, updates: Dict) -> Dict:
+        """
+        Update user attributes (role, permissions, depot_access)
+        
+        Args:
+            user_id: ID of the user
+            updates: Dict containing fields to update:
+                - role: str
+                - permissions: dict
+                - depot_access: list
+                - updated_by: int (ID of platform user)
+                
+        Returns:
+            Dict with updated user information
+        """
+        try:
+            user = CustomerUser.query.get(user_id)
+            if not user:
+                return {
+                    'success': False,
+                    'error': 'User not found',
+                    'code': 'USER_NOT_FOUND'
+                }
+            
+            updated_fields = []
+            
+            # Update role if provided
+            if 'role' in updates:
+                result = self._update_user_role(user, updates['role'])
+                if result:
+                    updated_fields.append('role')
+            
+            # Update permissions if provided
+            if 'permissions' in updates:
+                user.permissions = updates['permissions']
+                updated_fields.append('permissions')
+            
+            # Update depot access if provided
+            if 'depot_access' in updates:
+                validation_result = self._validate_depot_access(updates['depot_access'])
+                if not validation_result['valid']:
                     return {
                         'success': False,
-                        'error': f'Invalid depot codes: {", ".join(invalid_depots)}',
+                        'error': validation_result['error'],
                         'code': 'INVALID_DEPOTS'
                     }
+                user.depot_access = updates['depot_access']
+                updated_fields.append('depot_access')
             
-            # Update user
-            user.status = CustomerUserStatus.APPROVED
             user.updated_at = datetime.utcnow()
-            
-            if depot_access is not None:
-                user.depot_access = depot_access
-            
-            if custom_permissions is not None:
-                user.permissions = custom_permissions
-            
             db.session.commit()
             
             self.logger.info(
-                f"User {user.email} approved by platform user {approved_by}"
+                f"User {user.email} updated by platform user {updates.get('updated_by')}. "
+                f"Fields updated: {', '.join(updated_fields)}"
             )
-            
-            # TODO: Send approval notification email
             
             return {
                 'success': True,
-                'message': f'User {user.email} approved successfully',
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'status': user.status.value,
-                    'depot_access': user.depot_access,
-                    'permissions': user.permissions
-                }
+                'message': 'User updated successfully',
+                'updated_fields': updated_fields,
+                'user': self._format_user_response(user)
             }
             
         except Exception as e:
             db.session.rollback()
-            self.logger.error(f"Error approving user {user_id}: {str(e)}")
+            self.logger.error(f"Error updating user {user_id}: {str(e)}")
             raise
     
-    def reject_user(self, user_id: int, rejected_by: int, reason: str) -> Dict:
-        """
-        Reject a pending customer user.
+    # Helper Methods
+    
+    def _apply_user_filters(self, query: Query, filters: Dict) -> Query:
+        """Apply filters to user query"""
         
-        Args:
-            user_id: ID of user to reject
-            rejected_by: ID of platform user rejecting
-            reason: Reason for rejection
-            
-        Returns:
-            Result dictionary with success status
-        """
-        try:
-            user = CustomerUser.query.get(user_id)
-            if not user:
-                return {
-                    'success': False,
-                    'error': 'User not found',
-                    'code': 'USER_NOT_FOUND'
-                }
-            
-            if user.status != CustomerUserStatus.PENDING:
-                return {
-                    'success': False,
-                    'error': f'User status is {user.status.value}, not pending',
-                    'code': 'INVALID_STATUS'
-                }
-            
-            # Update user status to rejected
-            user.status = CustomerUserStatus.REJECTED
-            user.updated_at = datetime.utcnow()
-            
-            # TODO: Store rejection reason in audit log
-            
-            db.session.commit()
-            
-            self.logger.info(
-                f"User {user.email} rejected by platform user {rejected_by}. "
-                f"Reason: {reason}"
+        # Status filter (supports multiple values)
+        if filters.get('status'):
+            statuses = filters['status'] if isinstance(filters['status'], list) else [filters['status']]
+            status_enums = []
+            for status in statuses:
+                if status == 'pending':
+                    status_enums.append(CustomerUserStatus.PENDING)
+                elif status == 'approved':
+                    status_enums.append(CustomerUserStatus.APPROVED)
+                elif status == 'rejected':
+                    status_enums.append(CustomerUserStatus.REJECTED)
+            if status_enums:
+                query = query.filter(CustomerUser.status.in_(status_enums))
+        
+        # Customer filter (supports multiple values)
+        if filters.get('customer_id'):
+            customer_ids = filters['customer_id'] if isinstance(filters['customer_id'], list) else [filters['customer_id']]
+            query = query.filter(CustomerUser.customer_id.in_(customer_ids))
+        
+        # Role filter (supports multiple values)
+        if filters.get('role'):
+            roles = filters['role'] if isinstance(filters['role'], list) else [filters['role']]
+            role_enums = [CustomerUserRole[role.upper()] for role in roles]
+            query = query.filter(CustomerUser.role.in_(role_enums))
+        
+        # Search filter
+        if filters.get('search'):
+            search = f"%{filters['search']}%"
+            query = query.filter(
+                or_(
+                    CustomerUser.name.ilike(search),
+                    CustomerUser.email.ilike(search)
+                )
             )
-            
-            # TODO: Send rejection notification email
-            
-            return {
-                'success': True,
-                'message': f'User {user.email} rejected',
-                'reason': reason
-            }
-            
-        except Exception as e:
-            db.session.rollback()
-            self.logger.error(f"Error rejecting user {user_id}: {str(e)}")
-            raise
+        
+        # Date filters
+        if filters.get('created_after'):
+            query = query.filter(CustomerUser.created_at >= filters['created_after'])
+        if filters.get('created_before'):
+            query = query.filter(CustomerUser.created_at <= filters['created_before'])
+        
+        return query
     
-    # Customer Management Methods
+    def _apply_sorting(self, query: Query, model, sort_field: str) -> Query:
+        """Apply sorting to query"""
+        if sort_field.startswith('-'):
+            field_name = sort_field[1:]
+            order = 'desc'
+        else:
+            field_name = sort_field
+            order = 'asc'
+        
+        if hasattr(model, field_name):
+            field = getattr(model, field_name)
+            query = query.order_by(field.desc() if order == 'desc' else field.asc())
+        
+        return query
+    
+    def _format_user_response(self, user: CustomerUser) -> Dict:
+        """Format user object for API response"""
+        return {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'phone': user.phone,
+            'role': user.role.value,
+            'status': user.status.value,
+            'customer': {
+                'id': user.customer.id,
+                'name': user.customer.name,
+                'code': user.customer.customer_code,
+                'status': user.customer.status.value
+            } if user.customer else None,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
+            'last_login': user.last_login.isoformat() if user.last_login else None,
+            'days_pending': (datetime.utcnow() - user.created_at).days if user.created_at and user.status == CustomerUserStatus.PENDING else None,
+            'depot_access': user.depot_access,
+            'permissions': user.permissions,
+            'permission_code': user.permission_code
+        }
+    
+    def _approve_user_action(self, user: CustomerUser, context: Dict) -> Dict:
+        """Handle user approval"""
+        # Validate depot access if provided
+        if context.get('depot_access'):
+            validation_result = self._validate_depot_access(context['depot_access'])
+            if not validation_result['valid']:
+                return {
+                    'success': False,
+                    'error': validation_result['error'],
+                    'code': 'INVALID_DEPOTS'
+                }
+        
+        # Update user
+        user.status = CustomerUserStatus.APPROVED
+        user.updated_at = datetime.utcnow()
+        
+        if context.get('depot_access') is not None:
+            user.depot_access = context['depot_access']
+        
+        if context.get('custom_permissions') is not None:
+            user.permissions = context['custom_permissions']
+        
+        db.session.commit()
+        
+        self.logger.info(
+            f"User {user.email} approved by platform user {context['actor_id']}"
+        )
+        
+        # TODO: Send approval notification email
+        
+        return {
+            'success': True,
+            'message': f'User {user.email} approved successfully',
+            'user': self._format_user_response(user)
+        }
+    
+    def _reject_user_action(self, user: CustomerUser, context: Dict) -> Dict:
+        """Handle user rejection"""
+        if not context.get('reason'):
+            return {
+                'success': False,
+                'error': 'Rejection reason is required',
+                'code': 'REASON_REQUIRED'
+            }
+        
+        user.status = CustomerUserStatus.REJECTED
+        user.updated_at = datetime.utcnow()
+        
+        # TODO: Store rejection reason in audit log or user table
+        
+        db.session.commit()
+        
+        self.logger.info(
+            f"User {user.email} rejected by platform user {context['actor_id']}. "
+            f"Reason: {context['reason']}"
+        )
+        
+        # TODO: Send rejection notification email
+        
+        return {
+            'success': True,
+            'message': f'User {user.email} rejected',
+            'reason': context['reason'],
+            'user': self._format_user_response(user)
+        }
+    
+    def _update_user_role(self, user: CustomerUser, new_role: str) -> bool:
+        """Update user role and associated permission code"""
+        try:
+            new_role_enum = CustomerUserRole[new_role.upper()]
+        except KeyError:
+            raise ValueError(f'Invalid role: {new_role}')
+        
+        old_role = user.role
+        user.role = new_role_enum
+        
+        # Update permission code to match new role
+        permission_code = PermissionCode.query.filter_by(
+            role=new_role_enum.value
+        ).first()
+        
+        if permission_code:
+            user.permission_code = permission_code.code
+        
+        return True
+    
+    def _validate_depot_access(self, depot_codes: List[str]) -> Dict:
+        """Validate depot codes exist"""
+        valid_depots = {d.code for d in Depot.query.all()}
+        invalid_depots = set(depot_codes) - valid_depots
+        
+        if invalid_depots:
+            return {
+                'valid': False,
+                'error': f'Invalid depot codes: {", ".join(invalid_depots)}'
+            }
+        
+        return {'valid': True}
+    
+    def _get_permission_code_details(self, code: str) -> Optional[Dict]:
+        """Get permission code details"""
+        if not code:
+            return None
+            
+        perm_code = PermissionCode.query.filter_by(code=code).first()
+        if not perm_code:
+            return None
+            
+        return {
+            'code': perm_code.code,
+            'role': perm_code.role,
+            'permissions': perm_code.permissions
+        }
+    
+    def _get_depot_names(self, depot_codes: List[str]) -> List[Dict]:
+        """Get depot names for codes"""
+        if not depot_codes:
+            return []
+            
+        depots = Depot.query.filter(Depot.code.in_(depot_codes)).all()
+        return [{'code': d.code, 'name': d.name} for d in depots]
+    
+    def _get_user_activity_summary(self, user_id: int) -> Dict:
+        """Get user activity summary"""
+        # TODO: Implement when activity tracking is added
+        return {
+            'last_login': None,
+            'total_logins': 0,
+            'last_action': None
+        }
+    
+    def _get_approval_info(self, user: CustomerUser) -> Optional[Dict]:
+        """Get approval/rejection information"""
+        # TODO: Implement when approval tracking fields are added to model
+        return {
+            'approved_at': user.updated_at.isoformat() if user.status == CustomerUserStatus.APPROVED else None,
+            'approved_by': None,  # Will be populated when fields are added
+            'rejected_at': user.updated_at.isoformat() if user.status == CustomerUserStatus.REJECTED else None,
+            'rejected_by': None,  # Will be populated when fields are added
+            'rejection_reason': None  # Will be populated when fields are added
+        }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    ################################################################################ CUSTOMER MANAGEMENT METHODS ################################################################################
     
     def get_all_customers(self, filter_by: Optional[Dict] = None) -> List[Dict]:
         """
