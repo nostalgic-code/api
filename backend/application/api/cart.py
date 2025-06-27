@@ -92,6 +92,7 @@ def add_to_cart():
     except (ValueError, TypeError):
         return jsonify({'error': 'quantity must be a valid integer'}), 400
     
+    
     result = cart_service.add_to_cart(customer_user_id, product_code, quantity)
     return jsonify(result), 200 if result.get('success') else 400
 

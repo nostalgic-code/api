@@ -1,6 +1,8 @@
 from application import db
 from application.models.cart import Cart, CartItem
 from application.models.product import Product
+from application.models.cart import CartStatus
+from application.models.customer_user import CustomerUser
 import json
 
 class CartService:
@@ -77,9 +79,23 @@ class CartService:
     def add_to_cart(self, user_id: str, product_code: str, quantity: int):
         """Add item to cart (incremental)"""
         try:
-            cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+            # Get the user to access their depot_code
+            user = CustomerUser.query.get(user_id)
+            if not user:
+                return {'success': False, 'message': 'User not found'}
+            
+            # Extract depot_code from user's depot_access JSON
+            depot_code = None
+            if user.depot_access and isinstance(user.depot_access, list) and len(user.depot_access) > 0:
+                depot_code = user.depot_access[0]
+
+            if not depot_code:
+                return {'success': False, 'message': 'User depot access not configured'}
+            
+
+            cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE.value).first()
             if not cart:
-                cart = Cart(customer_user_id=user_id, items=json.dumps([]))
+                cart = Cart(customer_user_id=user_id, status=CartStatus.ACTIVE.value)
                 db.session.add(cart)
                 db.session.flush()
 
@@ -96,10 +112,10 @@ class CartService:
                 item = CartItem(
                     cart_id=cart.id,
                     product_code=product_code,
-                    product_name=product.name,
+                    product_name=product.description,
                     quantity=quantity,
                     price=product.current_price,
-                    depot_code=product.depot_code
+                    depot_code=depot_code
                 )
                 db.session.add(item)
 
@@ -162,7 +178,7 @@ class CartService:
                 item = CartItem(
                     cart_id=cart.id,
                     product_code=product.product_code,
-                    product_name=product.name,
+                    product_name=product.description,
                     quantity=item_data['quantity'],
                     price=product.current_price,
                     depot_code=product.depot_code

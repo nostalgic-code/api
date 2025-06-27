@@ -1,0 +1,2 @@
+2025-06-27 14:58:52,274 - application.middleware.auth - ERROR - Error in token validation: (pymysql.err.OperationalError) (1045, "Access denied for user 'zezwebox_zezwe'@'156.0.231.222' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
