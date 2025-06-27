@@ -240,8 +240,8 @@ def update_user(user_id):
         
         if 'role' in data:
             updates['role'] = data['role']
-        if 'permissions' in data:
-            updates['permissions'] = data['permissions']
+        if 'permission_code' in data:
+            updates['permission_code'] = data['permission_code']
         if 'depot_access' in data:
             updates['depot_access'] = data['depot_access']
         
@@ -547,112 +547,112 @@ def get_customer_users(customer_id):
 
 # Role and Permission Management
 
-@admin_bp.route('/users/<int:user_id>/role', methods=['PUT'])
-@token_required
-@platform_user_required
-def assign_user_role(user_id):
-    """
-    Change a user's role.
+# @admin_bp.route('/users/<int:user_id>/role', methods=['PUT'])
+# @token_required
+# @platform_user_required
+# def assign_user_role(user_id):
+#     """
+#     Change a user's role.
     
-    Request Body:
-        {
-            "role": "owner"
-        }
+#     Request Body:
+#         {
+#             "role": "owner"
+#         }
     
-    Response:
-        {
-            "success": true,
-            "message": "User role updated to owner",
-            "user": {
-                "id": 1,
-                "email": "john@company.com",
-                "old_role": "staff",
-                "new_role": "owner"
-            }
-        }
-    """
-    try:
-        data = request.get_json()
-        if not data or not data.get('role'):
-            return jsonify({
-                'success': False,
-                'error': 'Role is required',
-                'code': 'ROLE_REQUIRED'
-            }), 400
+#     Response:
+#         {
+#             "success": true,
+#             "message": "User role updated to owner",
+#             "user": {
+#                 "id": 1,
+#                 "email": "john@company.com",
+#                 "old_role": "staff",
+#                 "new_role": "owner"
+#             }
+#         }
+#     """
+#     try:
+#         data = request.get_json()
+#         if not data or not data.get('role'):
+#             return jsonify({
+#                 'success': False,
+#                 'error': 'Role is required',
+#                 'code': 'ROLE_REQUIRED'
+#             }), 400
         
-        result = admin_service.assign_role(
-            user_id=user_id,
-            new_role=data['role'],
-            assigned_by=g.current_user.id
-        )
+#         result = admin_service.assign_role(
+#             user_id=user_id,
+#             new_role=data['role'],
+#             assigned_by=g.current_user.id
+#         )
         
-        if result['success']:
-            return jsonify(result), 200
-        else:
-            return jsonify(result), 400
+#         if result['success']:
+#             return jsonify(result), 200
+#         else:
+#             return jsonify(result), 400
             
-    except Exception as e:
-        logger.error(f"Error assigning role to user {user_id}: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to assign role',
-            'code': 'ROLE_ERROR'
-        }), 500
+#     except Exception as e:
+#         logger.error(f"Error assigning role to user {user_id}: {str(e)}")
+#         return jsonify({
+#             'success': False,
+#             'error': 'Failed to assign role',
+#             'code': 'ROLE_ERROR'
+#         }), 500
 
 
-@admin_bp.route('/users/<int:user_id>/permissions', methods=['PUT'])
-@token_required
-@platform_user_required
-def update_user_permissions(user_id):
-    """
-    Update user's custom permissions.
+# @admin_bp.route('/users/<int:user_id>/permissions', methods=['PUT'])
+# @token_required
+# @platform_user_required
+# def update_user_permissions(user_id):
+#     """
+#     Update user's custom permissions.
     
-    Request Body:
-        {
-            "permissions": {
-                "orders": {"view": true, "create": true, "edit": false},
-                "reports": {"view": true, "export": false}
-            }
-        }
+#     Request Body:
+#         {
+#             "permissions": {
+#                 "orders": {"view": true, "create": true, "edit": false},
+#                 "reports": {"view": true, "export": false}
+#             }
+#         }
     
-    Response:
-        {
-            "success": true,
-            "message": "User permissions updated",
-            "user": {
-                "id": 1,
-                "email": "john@company.com",
-                "permissions": {...}
-            }
-        }
-    """
-    try:
-        data = request.get_json()
-        if not data or 'permissions' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Permissions object is required',
-                'code': 'PERMISSIONS_REQUIRED'
-            }), 400
+#     Response:
+#         {
+#             "success": true,
+#             "message": "User permissions updated",
+#             "user": {
+#                 "id": 1,
+#                 "email": "john@company.com",
+#                 "permissions": {...}
+#             }
+#         }
+#     """
+#     try:
+#         data = request.get_json()
+#         if not data or 'permissions' not in data:
+#             return jsonify({
+#                 'success': False,
+#                 'error': 'Permissions object is required',
+#                 'code': 'PERMISSIONS_REQUIRED'
+#             }), 400
         
-        result = admin_service.update_user_permissions(
-            user_id=user_id,
-            permissions=data['permissions'],
-            updated_by=g.current_user.id
-        )
+#         result = admin_service.update_user_permissions(
+#             user_id=user_id,
+#             permissions=data['permissions'],
+#             updated_by=g.current_user.id
+#         )
         
-        if result['success']:
-            return jsonify(result), 200
-        else:
-            return jsonify(result), 400
+#         if result['success']:
+#             return jsonify(result), 200
+#         else:
+#             return jsonify(result), 400
             
-    except Exception as e:
-        logger.error(f"Error updating permissions for user {user_id}: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to update permissions',
-            'code': 'PERMISSION_ERROR'
-        }), 500
+#     except Exception as e:
+#         logger.error(f"Error updating permissions for user {user_id}: {str(e)}")
+#         return jsonify({
+#             'success': False,
+#             'error': 'Failed to update permissions',
+#             'code': 'PERMISSION_ERROR'
+#         }), 500
 
 
 # System Information

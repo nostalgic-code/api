@@ -8,11 +8,11 @@ Author: Development Team
 Version: 1.0
 """
 
+from datetime import datetime
 import logging
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Query
-from sqlalchemy import column, or_, and_, func, table
-from datetime import datetime
+from sqlalchemy import or_
 
 from application.models.customer import Customer, CustomerStatus, CustomerType
 from application.models.customer_user import CustomerUser, CustomerUserStatus

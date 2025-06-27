@@ -341,7 +341,7 @@ def update_permission_code(user: CustomerUser, permission_code: str) -> Dict:
         }
 
     # Verify the permission code is appropriate for the user's role
-    if permission_obj.role != user.role.value:
+    if permission_obj.role.value != user.role.value:
         return {
             'success': False,
             'error': f'Permission code {permission_code} does not match user role {user.role.value}',

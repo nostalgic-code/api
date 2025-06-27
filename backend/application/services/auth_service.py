@@ -32,7 +32,7 @@ from application.models.customer_user import CustomerUser, CustomerUserStatus, C
 from application.models.user_otp import UserOTP
 from application.models.user_session import UserSession
 from application.models.permission_code import PermissionCode
-from application.services.helpers import auth_service_helpers as auth_helpers
+from application.services.helpers import auth_helpers
 
 class AuthService:
     """
