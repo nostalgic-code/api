@@ -51,6 +51,7 @@ def create_app(config_name=None):
     from application.api.common import common_bp
     from application.api.admin import admin_bp
     from application.api.products import products_bp
+    from application.api.cart import cart_bp
     from application.api.frontend import frontend_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')  # Add /api prefix
@@ -58,6 +59,7 @@ def create_app(config_name=None):
     app.register_blueprint(common_bp, url_prefix='/api')  # Add /api prefix
     app.register_blueprint(admin_bp, url_prefix='/api/admin')  # Already has /api
     app.register_blueprint(products_bp, url_prefix='/api/products')  # Add /api prefix
+    app.register_blueprint(cart_bp, url_prefix='/api/cart')  # Add /api prefix
     app.register_blueprint(frontend_bp)
     
     return app

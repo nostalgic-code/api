@@ -1,26 +1,19 @@
 from application import db
 from application.models.cart import Cart, CartItem
 from application.models.product import Product
+from application.models.cart import CartStatus
+from application.models.customer_user import CustomerUser
 import json
 
 class CartService:
     def get_cart(self, user_id: int):
         """Get complete cart for user"""
-        cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+        cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
         return cart.to_dict() if cart else None
     
-    def get_cart_items(self, user_id: str):
-        """Get all cart items as list"""
-        cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
-        if not cart:
-            return []
-        
-        items = CartItem.query.filter_by(cart_id=cart.id).all()
-        return [item.to_dict() for item in items]
-
     def get_cart_item(self, user_id: str, product_code: str):
         """Get specific cart item"""
-        cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+        cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
         if not cart:
             return None
         
@@ -32,7 +25,7 @@ class CartService:
         """Add or update cart item"""
         try:
             # Get or create cart
-            cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+            cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
             if not cart:
                 cart = Cart(customer_user_id=user_id, items=json.dumps([]))
                 db.session.add(cart)
@@ -66,20 +59,33 @@ class CartService:
 
     def get_cart_item_count(self, user_id: str):
         """Get total item count in cart"""
-        cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+        cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
         if not cart:
             return 0
         
         total = db.session.query(db.func.sum(CartItem.quantity)).filter_by(cart_id=cart.id).scalar()
         return total or 0
 
-
     def add_to_cart(self, user_id: str, product_code: str, quantity: int):
         """Add item to cart (incremental)"""
         try:
-            cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+            # Get the user to access their depot_code
+            user = CustomerUser.query.get(user_id)
+            if not user:
+                return {'success': False, 'message': 'User not found'}
+            
+            # Extract depot_code from user's depot_access JSON
+            depot_code = None
+            if user.depot_access and isinstance(user.depot_access, list) and len(user.depot_access) > 0:
+                depot_code = user.depot_access[0]
+
+            if not depot_code:
+                return {'success': False, 'message': 'User depot access not configured'}
+            
+
+            cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
             if not cart:
-                cart = Cart(customer_user_id=user_id, items=json.dumps([]))
+                cart = Cart(customer_user_id=user_id, status=CartStatus.ACTIVE)
                 db.session.add(cart)
                 db.session.flush()
 
@@ -96,10 +102,10 @@ class CartService:
                 item = CartItem(
                     cart_id=cart.id,
                     product_code=product_code,
-                    product_name=product.name,
+                    product_name=product.description,
                     quantity=quantity,
                     price=product.current_price,
-                    depot_code=product.depot_code
+                    depot_code=depot_code
                 )
                 db.session.add(item)
 
@@ -112,7 +118,7 @@ class CartService:
     def remove_cart_item(self, user_id: str, product_code: str):
         """Remove specific item from cart"""
         try:
-            cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+            cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
             if not cart:
                 return {'success': False, 'message': 'Cart not found'}
 
@@ -130,7 +136,7 @@ class CartService:
     def clear_cart(self, user_id: str):
         """Clear entire cart"""
         try:
-            cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+            cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
             if not cart:
                 return {'success': False, 'message': 'Cart not found'}
 
@@ -162,7 +168,7 @@ class CartService:
                 item = CartItem(
                     cart_id=cart.id,
                     product_code=product.product_code,
-                    product_name=product.name,
+                    product_name=product.description,
                     quantity=item_data['quantity'],
                     price=product.current_price,
                     depot_code=product.depot_code
@@ -178,7 +184,7 @@ class CartService:
     def update_cart_item(self, user_id: str, product_code: str, quantity: int):
         """Update cart item quantity"""
         try:
-            cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+            cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
             if not cart:
                 return {'success': False, 'message': 'Cart not found'}
 

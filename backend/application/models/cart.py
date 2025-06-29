@@ -5,9 +5,9 @@ from sqlalchemy.orm import relationship
 from enum import Enum
 
 class CartStatus(Enum):
-    ACTIVE = "active"
-    SUBMITTED = "submitted"
-    SAVED = "saved"
+    ACTIVE = "ACTIVE"
+    SUBMITTED = "SUBMITTED"
+    SAVED = "SAVED"
 
 class Cart(db.Model):
     __tablename__ = 'carts'
@@ -55,7 +55,7 @@ class CartItem(db.Model):
         return {
             "id": str(self.id),
             "cart_id": str(self.cart_id),
-            "product_code": str(self.product_id),
+            "product_code": str(self.product_code),
             "product_name": str(self.product_name),
             "quantity": self.quantity,
             "price": float(self.price),
