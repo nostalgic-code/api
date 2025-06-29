@@ -15,16 +15,6 @@ def get_cart():
     cart = cart_service.get_cart(customer_user_id)
     return jsonify(cart or {}), 200
 
-@cart_bp.route('/items', methods=['GET'])
-def get_cart_items():
-    """Get all cart items for a user (alternative endpoint)"""
-    customer_user_id = request.args.get('customer_user_id')
-    if not customer_user_id:
-        return jsonify({'error': 'customer_user_id is required'}), 400
-    
-    items = cart_service.get_cart_items(customer_user_id)
-    return jsonify(items or []), 200
-
 @cart_bp.route('/item', methods=['GET'])
 def get_cart_item():
     """Get specific cart item"""
@@ -148,9 +138,9 @@ def clear_cart():
     if not data:
         return jsonify({'error': 'JSON data is required'}), 400
     
-    customer_user_id = data.get('user_id')
+    customer_user_id = data.get('customer_user_id')
     if not customer_user_id:
-        return jsonify({'error': 'user_id is required'}), 400
+        return jsonify({'error': 'customer_user_id is required'}), 400
     
     result = cart_service.clear_cart(customer_user_id)
     return jsonify(result), 200 if result.get('success') else 400
