@@ -87,19 +87,19 @@ if __name__ == '__main__':
     print(f"Environment: {os.getenv('FLASK_ENV', 'development')}")
     print(f"Debug Mode: {app.config['DEBUG']}")
     print(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
-    print(f"Server URL: http://127.0.0.1:5000")
+    print(f"Server URL: http://127.0.0.1:8000")
     print("-"*60)
     print("\nAvailable Endpoints:")
-    print("  • Health Check: http://127.0.0.1:5000/health")
-    print("  • API Info: http://127.0.0.1:5000/")
-    print("  • Schema Info: http://127.0.0.1:5000/schema")
-    print("  • Auth API: http://127.0.0.1:5000/auth/*")
-    print("  • Pipeline API: http://127.0.0.1:5000/pipeline/*")
+    print("  • Health Check: http://127.0.0.1:8000/health")
+    print("  • API Info: http://127.0.0.1:8000/")
+    print("  • Schema Info: http://127.0.0.1:8000/schema")
+    print("  • Auth API: http://127.0.0.1:8000/auth/*")
+    print("  • Pipeline API: http://127.0.0.1:8000/pipeline/*")
     print("="*60 + "\n")
     
     # Run the application
     app.run(
         host='127.0.0.1',
-        port=5000,
+        port=8000,
         debug=app.config['DEBUG']
     )
