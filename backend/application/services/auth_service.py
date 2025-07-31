@@ -22,6 +22,7 @@ Version: 5.0
 """
 
 from datetime import datetime, timedelta
+<<<<<<< HEAD
 from typing import Dict, Optional
 import logging
 import bcrypt
@@ -35,6 +36,14 @@ from application.models.customer import Customer, CustomerStatus
 EXTERNAL_API_BASE = 'http://102.33.60.228:9183/getResources/customers/'
 EXTERNAL_API_USERNAME = 'd5900938-be95-4412-95b3-50b11983e13e'
 EXTERNAL_API_PASSWORD = '90fa0de5-250a-4e99-bd65-85b1854d9c82'
+=======
+from typing import Dict
+import logging
+import bcrypt
+
+from application import db
+from application.models.customer import Customer, CustomerStatus
+>>>>>>> 27f61773e6765a19dd86b1cf60784c8a9c6b9713
 from application.models.customer_user import CustomerUser, CustomerUserStatus, CustomerUserRole
 from application.models.user_otp import UserOTP
 from application.models.user_session import UserSession
