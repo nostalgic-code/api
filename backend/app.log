@@ -1,0 +1,208 @@
+2025-06-27 14:58:52,274 - application.middleware.auth - ERROR - Error in token validation: (pymysql.err.OperationalError) (1045, "Access denied for user 'zezwebox_zezwe'@'156.0.231.222' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2025-06-29 13:14:58,141 - application.services.auth_service - ERROR - Error sending OTP to +27630823819: (pymysql.err.OperationalError) (1045, "Access denied for user 'zezwebox_zezwe'@'102.39.173.168' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2025-06-29 13:31:54,596 - application - ERROR - Unhandled exception: 405 Method Not Allowed: The method is not allowed for the requested URL.
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/routing/map.py", line 624, in match
+    raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+werkzeug.exceptions.MethodNotAllowed: 405 Method Not Allowed: The method is not allowed for the requested URL.
+2025-06-29 13:32:52,953 - application - ERROR - Unhandled exception: 405 Method Not Allowed: The method is not allowed for the requested URL.
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/routing/map.py", line 624, in match
+    raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+werkzeug.exceptions.MethodNotAllowed: 405 Method Not Allowed: The method is not allowed for the requested URL.
+2025-06-29 13:32:57,086 - application - ERROR - Unhandled exception: Entity namespace for "carts" has no property "is_active"
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2193, in _entity_namespace_key
+    return getattr(ns, key)  # type: ignore
+AttributeError: type object 'Cart' has no attribute 'is_active'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 15, in get_cart
+    cart = cart_service.get_cart(customer_user_id)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/services/cart_service.py", line 11, in get_cart
+    cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1991, in filter_by
+    clauses = [
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1992, in <listcomp>
+    _entity_namespace_key(from_entity, key) == value
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2195, in _entity_namespace_key
+    raise exc.InvalidRequestError(
+sqlalchemy.exc.InvalidRequestError: Entity namespace for "carts" has no property "is_active"
+2025-06-29 13:33:13,035 - application - ERROR - Unhandled exception: Entity namespace for "carts" has no property "is_active"
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2193, in _entity_namespace_key
+    return getattr(ns, key)  # type: ignore
+AttributeError: type object 'Cart' has no attribute 'is_active'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 15, in get_cart
+    cart = cart_service.get_cart(customer_user_id)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/services/cart_service.py", line 11, in get_cart
+    cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1991, in filter_by
+    clauses = [
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1992, in <listcomp>
+    _entity_namespace_key(from_entity, key) == value
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2195, in _entity_namespace_key
+    raise exc.InvalidRequestError(
+sqlalchemy.exc.InvalidRequestError: Entity namespace for "carts" has no property "is_active"
+2025-06-29 13:42:46,398 - application - ERROR - Unhandled exception: Entity namespace for "carts" has no property "is_active"
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2193, in _entity_namespace_key
+    return getattr(ns, key)  # type: ignore
+AttributeError: type object 'Cart' has no attribute 'is_active'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 37, in get_cart_item
+    customer_user_id = data.get('customer_user_id')
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/services/cart_service.py", line 25, in get_cart_item
+    def save_cart_item(self, user_id: str, product_code: str, quantity: int):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1991, in filter_by
+    clauses = [
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1992, in <listcomp>
+    _entity_namespace_key(from_entity, key) == value
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2195, in _entity_namespace_key
+    raise exc.InvalidRequestError(
+sqlalchemy.exc.InvalidRequestError: Entity namespace for "carts" has no property "is_active"
+2025-06-29 13:43:30,253 - application - ERROR - Unhandled exception: Entity namespace for "carts" has no property "is_active"
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2193, in _entity_namespace_key
+    return getattr(ns, key)  # type: ignore
+AttributeError: type object 'Cart' has no attribute 'is_active'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 37, in get_cart_item
+    customer_user_id = data.get('customer_user_id')
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/services/cart_service.py", line 25, in get_cart_item
+    def save_cart_item(self, user_id: str, product_code: str, quantity: int):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1991, in filter_by
+    clauses = [
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1992, in <listcomp>
+    _entity_namespace_key(from_entity, key) == value
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2195, in _entity_namespace_key
+    raise exc.InvalidRequestError(
+sqlalchemy.exc.InvalidRequestError: Entity namespace for "carts" has no property "is_active"
+2025-06-29 13:52:13,483 - application - ERROR - Unhandled exception: 415 Unsupported Media Type: Did not attempt to load JSON data because the request Content-Type was not 'application/json'.
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 33, in save_cart_item
+    data = request.json
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/wrappers/request.py", line 560, in json
+    return self.get_json()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/wrappers/request.py", line 604, in get_json
+    return self.on_json_loading_failed(None)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/wrappers.py", line 214, in on_json_loading_failed
+    return super().on_json_loading_failed(e)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/wrappers/request.py", line 647, in on_json_loading_failed
+    raise UnsupportedMediaType(
+werkzeug.exceptions.UnsupportedMediaType: 415 Unsupported Media Type: Did not attempt to load JSON data because the request Content-Type was not 'application/json'.
+2025-06-29 13:55:03,499 - application - ERROR - Unhandled exception: Entity namespace for "carts" has no property "is_active"
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2193, in _entity_namespace_key
+    return getattr(ns, key)  # type: ignore
+AttributeError: type object 'Cart' has no attribute 'is_active'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 61, in get_cart_count
+    count = cart_service.get_cart_item_count(customer_user_id)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/services/cart_service.py", line 62, in get_cart_item_count
+    cart = Cart.query.filter_by(customer_user_id=user_id, is_active=True).first()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1991, in filter_by
+    clauses = [
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1992, in <listcomp>
+    _entity_namespace_key(from_entity, key) == value
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2195, in _entity_namespace_key
+    raise exc.InvalidRequestError(
+sqlalchemy.exc.InvalidRequestError: Entity namespace for "carts" has no property "is_active"
+2025-06-29 13:55:27,287 - application - ERROR - Unhandled exception: Entity namespace for "carts" has no property "is_active"
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2193, in _entity_namespace_key
+    return getattr(ns, key)  # type: ignore
+AttributeError: type object 'Cart' has no attribute 'is_active'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 61, in get_cart_count
+    count = cart_service.get_cart_item_count(customer_user_id)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/services/cart_service.py", line 62, in get_cart_item_count
+    cart = Cart.query.filter_by(customer_user_id=user_id, status=CartStatus.ACTIVE).first()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1991, in filter_by
+    clauses = [
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/orm/query.py", line 1992, in <listcomp>
+    _entity_namespace_key(from_entity, key) == value
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/sqlalchemy/sql/base.py", line 2195, in _entity_namespace_key
+    raise exc.InvalidRequestError(
+sqlalchemy.exc.InvalidRequestError: Entity namespace for "carts" has no property "is_active"
+2025-06-29 14:10:50,459 - application - ERROR - Unhandled exception: 415 Unsupported Media Type: Did not attempt to load JSON data because the request Content-Type was not 'application/json'.
+Traceback (most recent call last):
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+  File "/Users/mzwandiledlomo/Desktop/temp/api/backend/application/api/cart.py", line 137, in clear_cart
+    data = request.json
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/wrappers/request.py", line 560, in json
+    return self.get_json()
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/wrappers/request.py", line 604, in get_json
+    return self.on_json_loading_failed(None)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/flask/wrappers.py", line 214, in on_json_loading_failed
+    return super().on_json_loading_failed(e)
+  File "/Users/mzwandiledlomo/Desktop/temp/api/venv/lib/python3.9/site-packages/werkzeug/wrappers/request.py", line 647, in on_json_loading_failed
+    raise UnsupportedMediaType(
+werkzeug.exceptions.UnsupportedMediaType: 415 Unsupported Media Type: Did not attempt to load JSON data because the request Content-Type was not 'application/json'.

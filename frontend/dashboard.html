@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autospares Pipeline Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#667eea',
+                        secondary: '#764ba2'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-primary to-secondary text-white shadow-lg">
+        <div class="container mx-auto px-6 py-8">
+            <h1 class="text-4xl font-bold mb-2">🚗 Autospares Pipeline Dashboard</h1>
+            <p class="text-lg opacity-90">Monitor and control your product data synchronization</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container mx-auto px-6 py-8">
+        <!-- Alert Messages -->
+        <div id="alert-container" class="mb-6"></div>
+
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <!-- Total Products -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-blue-100 text-blue-600">
+                        📦
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Total Products</p>
+                        <p class="text-2xl font-bold text-gray-900" id="total-products">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Available Products -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-green-100 text-green-600">
+                        ✅
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Available</p>
+                        <p class="text-2xl font-bold text-gray-900" id="available-products">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Average Price -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-yellow-100 text-yellow-600">
+                        💰
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Avg Price</p>
+                        <p class="text-2xl font-bold text-gray-900" id="avg-price">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Last Sync -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-purple-100 text-purple-600">
+                        🔄
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Last Sync</p>
+                        <p class="text-sm font-bold text-gray-900" id="last-sync">-</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Dashboard Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Pipeline Operations -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">⚙️ Pipeline Operations</h3>
+                    
+                    <!-- Full Sync Configuration -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Full Sync Configuration</label>
+                        <div class="space-y-2">
+                            <input type="number" id="page-size" placeholder="Page Size" value="100" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                            <input type="number" id="max-pages" placeholder="Max Pages (optional)" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                        </div>
+                        <button onclick="runFullSync()" id="full-sync-btn" 
+                                class="w-full mt-3 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-200">
+                            🔄 Run Full Sync
+                        </button>
+                    </div>
+
+                    <!-- Incremental Sync -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Incremental Sync</label>
+                        <input type="number" id="hours-back" placeholder="Hours Back" value="1" 
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                        <button onclick="runIncrementalSync()" id="incremental-sync-btn" 
+                                class="w-full mt-3 bg-primary hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-200">
+                            ⚡ Run Incremental Sync
+                        </button>
+                    </div>
+
+                    <!-- Refresh Stats -->
+                    <button onclick="loadStatistics()" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-200">
+                        🔄 Refresh Stats
+                    </button>
+                </div>
+            </div>
+
+            <!-- Statistics and Recent Syncs -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Top Categories -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">📊 Top Categories</h3>
+                    <div id="top-categories" class="space-y-2">
+                        <div class="text-gray-500">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Recent Sync History -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">📝 Recent Sync History</h3>
+                    <div id="recent-syncs" class="space-y-3">
+                        <div class="text-gray-500">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Product Search Section -->
+        <div class="mt-8 bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">🔍 Product Search</h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <input type="text" id="search-term" placeholder="Search products..." 
+                       class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                <input type="text" id="search-category" placeholder="Category" 
+                       class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                <input type="text" id="search-brand" placeholder="Brand" 
+                       class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary">
+                <button onclick="searchProducts()" 
+                        class="bg-primary hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-200">
+                    Search
+                </button>
+            </div>
+
+            <!-- Products Results -->
+            <div id="products-results" class="overflow-x-auto">
+                <!-- Products will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner Component -->
+    <div id="loading-spinner" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                </div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mt-4">Processing...</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500" id="loading-message">Please wait while we process your request.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Base URL - update this to match your Flask app URL
+        const API_BASE_URL = 'http://127.0.0.1:5000';
+
+        // Show/Hide loading spinner
+        function showLoading(message = 'Processing...') {
+            document.getElementById('loading-message').textContent = message;
+            document.getElementById('loading-spinner').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-spinner').classList.add('hidden');
+        }
+
+        // Show alert messages
+        function showAlert(message, type = 'info') {
+            const alertContainer = document.getElementById('alert-container');
+            const alertColors = {
+                success: 'bg-green-100 border-green-500 text-green-700',
+                error: 'bg-red-100 border-red-500 text-red-700',
+                info: 'bg-blue-100 border-blue-500 text-blue-700',
+                warning: 'bg-yellow-100 border-yellow-500 text-yellow-700'
+            };
+
+            const alertHtml = `
+                <div class="border-l-4 p-4 ${alertColors[type]} mb-4 rounded">
+                    <div class="flex">
+                        <div class="ml-3">
+                            <p class="text-sm">${message}</p>
+                        </div>
+                        <div class="ml-auto pl-3">
+                            <button onclick="this.parentElement.parentElement.parentElement.remove()" class="text-gray-400 hover:text-gray-600">
+                                <span class="sr-only">Dismiss</span>
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            alertContainer.insertAdjacentHTML('beforeend', alertHtml);
+
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                const alerts = alertContainer.children;
+                if (alerts.length > 0) {
+                    alerts[0].remove();
+                }
+            }, 5000);
+        }
+
+        // Load marketplace statistics
+        async function loadStatistics() {
+            try {
+                showLoading('Loading statistics...');
+                const response = await fetch(`${API_BASE_URL}/marketplace/stats`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Update stats cards
+                    document.getElementById('total-products').textContent = data.total_products || 0;
+                    document.getElementById('available-products').textContent = data.available_products || 0;
+                    
+                    if (data.price_range) {
+                        document.getElementById('avg-price').textContent = `R${data.price_range.average.toFixed(2)}`;
+                    }
+
+                    // Update last sync
+                    if (data.recent_syncs && data.recent_syncs.length > 0) {
+                        const lastSync = data.recent_syncs[0];
+                        const syncDate = new Date(lastSync.completed).toLocaleString();
+                        document.getElementById('last-sync').textContent = syncDate;
+                    }
+
+                    // Update top categories
+                    const categoriesHtml = data.top_categories.map(cat => 
+                        `<div class="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span class="text-gray-700">${cat.category}</span>
+                            <span class="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded-full">${cat.count}</span>
+                        </div>`
+                    ).join('');
+                    document.getElementById('top-categories').innerHTML = categoriesHtml || '<div class="text-gray-500">No data available</div>';
+
+                    // Update recent syncs
+                    const syncsHtml = data.recent_syncs.map(sync => {
+                        const statusColor = sync.status === 'completed' ? 'text-green-600' : 
+                                          sync.status === 'failed' ? 'text-red-600' : 'text-yellow-600';
+                        const syncDate = new Date(sync.completed).toLocaleString();
+                        
+                        return `<div class="flex justify-between items-center py-3 border-b border-gray-100">
+                            <div>
+                                <div class="font-medium text-gray-900">${sync.type.charAt(0).toUpperCase() + sync.type.slice(1)} Sync</div>
+                                <div class="text-sm text-gray-500">${syncDate}</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-sm ${statusColor} font-medium">${sync.status}</div>
+                                <div class="text-xs text-gray-500">+${sync.inserted} | ~${sync.updated}</div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                    document.getElementById('recent-syncs').innerHTML = syncsHtml || '<div class="text-gray-500">No sync history available</div>';
+
+                    showAlert('Statistics loaded successfully!', 'success');
+                } else {
+                    showAlert(`Error loading statistics: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`Failed to load statistics: ${error.message}`, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Run full sync
+        async function runFullSync() {
+            const pageSize = document.getElementById('page-size').value;
+            const maxPages = document.getElementById('max-pages').value;
+            const button = document.getElementById('full-sync-btn');
+
+            try {
+                button.disabled = true;
+                button.textContent = '🔄 Running...';
+                showLoading('Running full synchronization...');
+
+                const payload = {
+                    page_size: parseInt(pageSize) || 100
+                };
+                if (maxPages) {
+                    payload.max_pages = parseInt(maxPages);
+                }
+
+                const response = await fetch(`${API_BASE_URL}/pipeline/sync/full`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showAlert('Full sync completed successfully!', 'success');
+                    loadStatistics(); // Refresh stats
+                } else {
+                    showAlert(`Full sync failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`Full sync failed: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = '🔄 Run Full Sync';
+                hideLoading();
+            }
+        }
+
+        // Run incremental sync
+        async function runIncrementalSync() {
+            const hoursBack = document.getElementById('hours-back').value;
+            const button = document.getElementById('incremental-sync-btn');
+
+            try {
+                button.disabled = true;
+                button.textContent = '⚡ Running...';
+                showLoading('Running incremental synchronization...');
+
+                const response = await fetch(`${API_BASE_URL}/pipeline/sync/incremental`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        hours_back: parseInt(hoursBack) || 1
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showAlert('Incremental sync completed successfully!', 'success');
+                    loadStatistics(); // Refresh stats
+                } else {
+                    showAlert(`Incremental sync failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`Incremental sync failed: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = '⚡ Run Incremental Sync';
+                hideLoading();
+            }
+        }
+
+        // Search products
+        async function searchProducts() {
+            const searchTerm = document.getElementById('search-term').value;
+            const category = document.getElementById('search-category').value;
+            const brand = document.getElementById('search-brand').value;
+
+            try {
+                showLoading('Searching products...');
+
+                const params = new URLSearchParams();
+                if (searchTerm) params.append('search', searchTerm);
+                if (category) params.append('category', category);
+                if (brand) params.append('brand', brand);
+                params.append('limit', '20');
+
+                const response = await fetch(`${API_BASE_URL}/marketplace/products?${params}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    const productsHtml = `
+                        <table class="min-w-full bg-white">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Code</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${data.products.map(product => `
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${product.product_code}</td>
+                                        <td class="px-6 py-4 text-sm text-gray-900">${product.description.substring(0, 50)}...</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${product.brand}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">R${product.price.toFixed(2)}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${product.quantity_available}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        <div class="mt-4 text-sm text-gray-500">
+                            Showing ${data.products.length} of ${data.pagination.total_items} products
+                        </div>
+                    `;
+                    document.getElementById('products-results').innerHTML = productsHtml;
+                    showAlert(`Found ${data.pagination.total_items} products`, 'success');
+                } else {
+                    showAlert(`Search failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`Search failed: ${error.message}`, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Load initial data when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStatistics();
+        });
+    </script>
+</body>
+</html>
