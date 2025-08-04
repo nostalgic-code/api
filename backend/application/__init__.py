@@ -42,7 +42,7 @@ def create_app(config_name=None):
         from application.models import (
             customer, customer_user, platform_user,
             user_otp, user_session, product,
-            depot, permission_code
+            depot, permission_code, order
         )
     
     # Register blueprints
@@ -54,6 +54,7 @@ def create_app(config_name=None):
     from application.api.cart import cart_bp
     from application.api.frontend import frontend_bp
     from application.api.customer import customer_bp
+    from application.api.sales_order import sales_order_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')  # Add /api prefix
     app.register_blueprint(pipeline_bp, url_prefix='/api/pipeline')  # Add /api prefix
@@ -62,6 +63,7 @@ def create_app(config_name=None):
     app.register_blueprint(products_bp, url_prefix='/api/products')  # Add /api prefix
     app.register_blueprint(cart_bp, url_prefix='/api/cart')  # Add /api prefix
     app.register_blueprint(customer_bp, url_prefix='/api/customer')  # Add /api prefix
+    app.register_blueprint(sales_order_bp, url_prefix='/api')  # Prefix defined in blueprint
     app.register_blueprint(frontend_bp)
     
     return app
