@@ -20,7 +20,6 @@ class Customer(db.Model):
     customer_code = db.Column(db.String(100), unique=True, nullable=False, index=True)
     account_number = db.Column(db.String(100), index=True)
     name = db.Column(db.String(255), nullable=False, index=True)
-<<<<<<< HEAD
     contact_one = db.Column(db.String(100))
     telephone = db.Column(db.String(20))
     statement_email = db.Column(db.String(255))
@@ -37,8 +36,7 @@ class Customer(db.Model):
     street_address_line2 = db.Column(db.String(255))
     street_address_line3 = db.Column(db.String(255))
     
-=======
->>>>>>> 27f61773e6765a19dd86b1cf60784c8a9c6b9713
+
     type = db.Column(db.Enum(CustomerType, values_callable=lambda x: [e.value for e in x]), 
                      nullable=False, default=CustomerType.COMPANY)
     status = db.Column(db.Enum(CustomerStatus, values_callable=lambda x: [e.value for e in x]), 
