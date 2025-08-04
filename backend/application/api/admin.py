@@ -744,3 +744,76 @@ def get_recent_activity():
         }), 500
 
 
+@admin_bp.route('/customers/upsert', methods=['POST'])
+@token_required
+@platform_user_required
+def upsert_customer():
+    """
+    Create or update a customer record
+    
+    Request Body:
+        {
+            "customer_code": "999KJS02",
+            "account_number": "999KJS02",
+            "name": "KJ SPARES 4 U (PTY) LTD",
+            "contact_one": "KASHIF",
+            "telephone": "0725555888",
+            "statement_email": "autozonehendrina@gmail.com",
+            "branch_code": "999",
+            "ship_via_code": "44",
+            "assigned_rep": "17",
+            "area_code": "009",
+            "postal_address_line1": "57 KERK STREET",
+            "postal_address_line2": "HENDRINA",
+            "postal_address_line3": "1095",
+            "street_address_line1": "27 VUYISILE MINI STREET",
+            "street_address_line2": "BETHAL",
+            "street_address_line3": "2310",
+            "type": "company",
+            "status": "on_hold",
+            "created_at": "03-28-2024",
+            "balance": "0.00",
+            "credit_limit": "30000.00"
+        }
+    
+    Response:
+        {
+            "success": true,
+            "message": "Customer updated",
+            "customer": {
+                "id": 1,
+                "customer_code": "999KJS02",
+                "name": "KJ SPARES 4 U (PTY) LTD",
+                "status": "on_hold"
+            }
+        }
+    """
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'Request must be JSON'}), 400
+        
+        customer_data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['customer_code', 'name']
+        for field in required_fields:
+            if field not in customer_data:
+                return jsonify({
+                    'success': False,
+                    'message': f'Missing required field: {field}'
+                }), 400
+        
+        result = admin_service.upsert_customer(customer_data)
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        logger.error(f"Error in upsert_customer: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Server error: {str(e)}'
+        }), 500
+

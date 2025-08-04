@@ -711,5 +711,66 @@ class AdminService:
             self.logger.error(f"Error updating permissions for user {user_id}: {str(e)}")
             raise
     
+    ################################################################################## CUSTOMER MANAGEMENT METHODS ##################################################################################
+    
+    def upsert_customer(self, customer_data: Dict[str, Any]) -> Dict:
+        """
+        Create or update a customer
+        
+        Args:
+            customer_data: Dict containing customer fields
+        
+        Returns:
+            Dict with success status and customer info
+        """
+        try:
+            # Check if customer exists by customer_code
+            customer_code = customer_data.get('customer_code')
+            if not customer_code:
+                return {
+                    'success': False, 
+                    'message': 'Customer code is required'
+                }
+            
+            customer = Customer.query.filter_by(customer_code=customer_code).first()
+            
+            if customer:
+                # Update existing customer
+                for key, value in customer_data.items():
+                    if hasattr(customer, key) and key != 'id':
+                        setattr(customer, key, value)
+                
+                customer.updated_at = datetime.utcnow()
+                message = f"Customer {customer_code} updated"
+                self.logger.info(message)
+            else:
+                # Create new customer
+                customer = Customer(**customer_data)
+                db.session.add(customer)
+                message = f"Customer {customer_code} created"
+                self.logger.info(message)
+            
+            db.session.commit()
+            
+            return {
+                'success': True,
+                'message': message,
+                'customer': {
+                    'id': customer.id,
+                    'customer_code': customer.customer_code,
+                    'name': customer.name,
+                    'status': customer.status.value if hasattr(customer.status, 'value') else customer.status
+                }
+            }
+            
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error upserting customer: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                'success': False,
+                'message': error_msg
+            }
+    
 # Create singleton instance
 admin_service = AdminService()
