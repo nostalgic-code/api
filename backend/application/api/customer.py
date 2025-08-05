@@ -67,6 +67,8 @@ def get_customer_profile():
             },
             'type': customer.type.value if hasattr(customer.type, 'value') else customer.type,
             'status': customer.status.value if hasattr(customer.status, 'value') else customer.status,
+            'credit_limit': float(customer.credit_limit) if customer.credit_limit else 0.0,
+            'balance': float(customer.balance) if customer.balance else 0.0,
             'created_at': customer.created_at.isoformat() if customer.created_at else None,
             'updated_at': customer.updated_at.isoformat() if customer.updated_at else None
         }

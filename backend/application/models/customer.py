@@ -36,11 +36,13 @@ class Customer(db.Model):
     street_address_line2 = db.Column(db.String(255))
     street_address_line3 = db.Column(db.String(255))
     
-
     type = db.Column(db.Enum(CustomerType, values_callable=lambda x: [e.value for e in x]), 
                      nullable=False, default=CustomerType.COMPANY)
     status = db.Column(db.Enum(CustomerStatus, values_callable=lambda x: [e.value for e in x]), 
                        nullable=False, default=CustomerStatus.PENDING, index=True)
+    credit_limit = db.Column(db.Numeric(10, 2), nullable=True)
+    balance = db.Column(db.Numeric(10, 2), nullable=True)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
